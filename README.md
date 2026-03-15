@@ -1,49 +1,150 @@
-# Sagittal Measure Assist (3D Slicer Extension)
+# Sagittal Measure Assist
 
-脊柱側面X線で5ランドマークを手動計測し、同じデータを学習用にエクスポートできる拡張（`.npy/.nrrd/.json`）。外部で学習したモデルはONNXにしてSlicerで推論に使う想定。
+脊椎側面X線（DICOM）から椎体ランドマークを手動で配置し、脊椎矢状面アライメント（PI/PT/SS/LL）を計測するための **3D Slicer 拡張**。
+計測データを学習用にエクスポートし、AIモデルを訓練してランドマーク配置の自動化も目指せる。
 
-## Slicerでの使い方
-1) 側面X線Volumeを読み込み。  
-2) Markups Fiducialを選択/作成し、順に 5 点（L1_ant, L1_post, S1_ant, S1_post, FH）を配置。  
-3) 「計測を更新」で PI/PT/SS/LL を確認（左右反転が必要ならチェック）。  
-4) エクスポートセクションで出力先とケースID（または自動採番）を指定し「エクスポート」。`.npy`（画像配列）, `.nrrd`（元Volume）, `.json`（IJK座標と角度/メタデータ）を保存。
+---
 
-### エクスポートの中身（`.json`）
-- `landmarks_ijk`: 各ランドマークのI/J/K（ピクセル空間）  
-- `metadata`: `spacing`, `ijk_to_ras` 行列, `origin_ras`  
-- `image_shape`: `.npy` のshape  
-- `angles_deg`: PI/PT/SS/LL  
-- `flip_x_axis`: 左右反転補正の有無
+## 全体の流れ
+
+```
+[1. 計測のみ]
+DICOM読み込み → ランドマーク配置 → 角度を確認
+
+[2. 学習データを作る]
+DICOM読み込み → ランドマーク配置 → エクスポート（.npy/.nrrd/.json）
+
+[3. モデルを訓練する]（Slicer外部）
+エクスポートデータ → 学習 → ONNXモデル出力
+
+[4. 自動推論を使う]
+ONNXモデル + DICOM → ランドマーク自動配置 → 角度確認
+```
+
+---
+
+## セットアップ
+
+### Slicer拡張のインストール
+1. 3D Slicerを起動
+2. `Edit > Application Settings > Modules > Additional module paths` に `SagittalMeasureAssist/` フォルダを追加
+3. Slicerを再起動 → モジュールリストに "Sagittal Measure Assist" が表示される
+
+### 自動推論を使う場合（追加）
+SlicerのPython Consoleで `onnxruntime` をインストール：
+```python
+import pip
+pip.main(["install", "onnxruntime"])
+```
+
+---
+
+## 使い方
+
+### STEP 1: DICOMを読み込む
+
+1. Slicerのメニューから `File > Add DICOM Data` を開く
+2. DICOMファイルをインポートし、**Load** ボタンで読み込む
+3. モジュール「Sagittal Measure Assist」を開き、**Volume** セレクターで対象を選ぶ
+   - スライスビューが自動更新される
+   - エクスポート用のケースIDにPatient IDが自動入力される
+
+### STEP 2: ランドマークを配置する
+
+「計測」セクションで **新規作成 / 1点追加** ボタンを使い、以下の順に5点を置く：
+
+| 順番 | ランドマーク | 場所 |
+|------|------------|------|
+| 1 | L1_ant | L1頭側終板 前縁 |
+| 2 | L1_post | L1頭側終板 後縁 |
+| 3 | S1_ant | S1頭側終板 前縁 |
+| 4 | S1_post | S1頭側終板 後縁 |
+| 5 | FH | 両側大腿骨頭の中心 |
+
+> **画像が左右逆の場合**: 「左右反転補正」にチェックを入れる。
+
+### STEP 3: 角度を確認する
+
+**計測を更新** ボタンを押すと PI / PT / SS / LL（度）が表示される。
+
+### STEP 4: 学習データをエクスポートする（任意）
+
+「エクスポート」セクションで：
+1. **出力先フォルダ**を指定
+2. **ケースID** を確認（Patient IDが自動入力済み）
+3. **エクスポート** ボタンを押す
+
+以下の3ファイルが保存される：
+
+| ファイル | 内容 |
+|---------|------|
+| `{ケースID}_image.npy` | 画像配列（NumPy形式） |
+| `{ケースID}_volume.nrrd` | ボリューム本体 |
+| `{ケースID}_landmarks.json` | ランドマーク座標 + 角度 + メタデータ |
+
+---
+
+## モデルの訓練（Slicer外部）
+
+複数ケースをエクスポートしたら、以下の手順でモデルを訓練する。
+
+```bash
+# 依存インストール（初回のみ）
+uv sync --extra ml
+
+# 学習
+uv run python train/train.py \
+  --data-dir /path/to/exported \
+  --save-dir runs \
+  --epochs 20
+
+# ONNXに変換
+uv run python train/export_onnx.py \
+  --checkpoint runs/best.pt \
+  --output runs/best.onnx \
+  --height 512 --width 512
+```
+
+学習の仕組み（概要）：
+- 画像を512×512にリサイズ（縦横比を維持してパディング）
+- 各ランドマークに2Dガウスを置いた5枚のヒートマップを教師信号に使用
+- 軽量UNetでヒートマップを予測し、MSEで学習
+
+---
+
+## 自動推論（Slicer内）
+
+訓練済みONNXモデルで5点を自動配置できる。
+
+1. 「自動推論 (ONNX)」セクションでモデルファイル（`.onnx`）を選択
+2. 入力サイズを学習時と合わせる（デフォルト: 512×512）
+3. **推論してMarkupsに配置** ボタンを押す → 5点が自動配置され、角度も更新される
+
+---
+
+## テスト
+
+```bash
+uv run -m pytest
+```
+
+---
 
 ## ディレクトリ構成
-- `SagittalMeasureAssist/` — エントリーポイントとUI分割。  
-  - `logic_angles.py`, `logic_export.py`, `ui_measure.py`, `ui_export.py`, `assist_controller.py`  
-- `train/` — 外部学習用スクリプト（PyTorch/ONNX）。  
-- `CMakeLists.txt` — Slicer拡張のエントリーポイント。
 
-## テスト（純Python）
-- 事前準備不要: `uv run python -m pytest`
+```
+SagittalMeasureAssist/   # Slicer拡張本体
+  SagittalMeasureAssist.py  # エントリーポイント
+  lib/
+    assist_controller.py  # UIとロジックをつなぐ
+    ui_measure.py         # 計測パネルUI
+    ui_export.py          # エクスポートパネルUI
+    ui_auto.py            # 自動推論パネルUI
+    logic_angles.py       # 角度計算
+    logic_export.py       # エクスポート処理
+    logic_inference.py    # ONNX推論処理
 
-## 学習パイプライン（外部uv環境）
-- 依存インストール（CPU想定）: `uv sync --extra ml`  
-- 学習（縦横比を保ちパディングしてリサイズ）:  
-  `uv run python train/train.py --data-dir /path/to/exported --save-dir runs --epochs 20`  
-  - 入力: `*_image.npy`, `*_landmarks.json`（Slicerエクスポート）  
-  - モデル: 軽量UNet、出力5チャネルのヒートマップ  
-  - 出力: `runs/best.pt`, `runs/last.pt`  
-- ONNXエクスポート:  
-  `uv run python train/export_onnx.py --checkpoint runs/best.pt --output runs/best.onnx --height 512 --width 512`  
-- ONNX簡易推論（onnxruntime）:  
-  `uv run python train/infer_onnx.py --model runs/best.onnx --image sample_image.npy --json sample_landmarks.json`
-
-### モデルロジック（初心者向け）
-- 画像を1chに正規化 → 縦横比維持でリサイズ＋余白パディング → 512x512（デフォルト）。  
-- 座標も同じスケール＆パディング量で変換し、各点に2Dガウスを置いた5枚のヒートマップを教師信号に。  
-- 軽量UNetが5チャネルのヒートマップを出力し、MSEで学習。  
-- ONNXに書き出せば、Slicer側でONNX Runtimeを使い、ヒートマップの最大値をMarkupsに置くだけで自動配置に使える。
-
-## Slicer側のONNX推論（自動配置）
-- モデル: `train/export_onnx.py` で出力した `.onnx` を指定。  
-- 操作: モジュール内「自動推論 (ONNX)」セクションでモデルパスと入力サイズ(学習時と同じ値)を設定→「推論してMarkupsに配置」。  
-- 処理: Volumeの1スライス目を正規化・パディングリサイズ→ONNX推論→ヒートマップ最大値を元画像座標へ逆変換→Markupsに5点を自動配置→計測テーブル更新。  
-- 注意: モデルの入力サイズは学習時の値に合わせてください（デフォルト512x512）。Slicer環境に`onnxruntime`が無い場合は事前にインストールが必要です。
+train/                   # 学習・変換スクリプト（Slicer外部）
+data/                    # DICOMファイル置き場（Patient IDでリネーム済み）
+scripts/                 # DICOMメタデータ調査スクリプト
+```

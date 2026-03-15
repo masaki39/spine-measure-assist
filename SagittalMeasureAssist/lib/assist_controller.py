@@ -27,6 +27,7 @@ class AssistController:
 
     # --- Signal wiring ---
     def _connect_signals(self):
+        self.measure_ui.volumeSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onVolumeChanged)
         self.measure_ui.createMarkupButton.connect("clicked()", self.onCreateMarkup)
         self.measure_ui.clearMarkupButton.connect("clicked()", self.onClearMarkups)
         self.measure_ui.updateButton.connect("clicked()", self.onUpdateMeasurements)
@@ -38,6 +39,24 @@ class AssistController:
         self.auto_ui.runButton.connect("clicked()", self.onRunInference)
 
     # --- Handlers ---
+    def onVolumeChanged(self, volumeNode):
+        slicer.util.setSliceViewerLayers(background=volumeNode)
+        if volumeNode is None:
+            return
+        patient_id = self._get_patient_id(volumeNode)
+        if patient_id:
+            self.export_ui.caseIdEdit.setText(patient_id)
+
+    def _get_patient_id(self, volumeNode):
+        try:
+            instance_uids = volumeNode.GetAttribute("DICOM.instanceUIDs")
+            if not instance_uids:
+                return None
+            uid = instance_uids.split()[0]
+            return slicer.dicomDatabase.instanceValue(uid, "0010,0020").strip() or None
+        except Exception:
+            return None
+
     def onCreateMarkup(self):
         fiducialNode = self._ensureMarkupNodeExists()
         self.measure_ui.markupSelector.setCurrentNode(fiducialNode)
