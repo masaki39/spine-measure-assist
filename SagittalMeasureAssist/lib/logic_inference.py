@@ -113,12 +113,6 @@ class OnnxInferenceLogic:
         ras_h = mat.MultiplyPoint(ijk_h)
         return ras_h[:3]
 
-    def _coords_ij_to_ras(self, volumeNode, coords_ij):
-        coords_ras = []
-        for (i, j) in coords_ij:
-            coords_ras.append(self._ijk_to_ras(volumeNode, i, j, 0.0))
-        return coords_ras
-
     def predict_and_place(self, volumeNode, markupNode):
         if self.session is None:
             raise RuntimeError("モデルがロードされていません。")
