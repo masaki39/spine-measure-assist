@@ -22,6 +22,8 @@ class AssistController:
         self.logic = logic
         self.counter = 1
         self.infer = OnnxInferenceLogic()
+        self._observedMarkupNode = None
+        self._markupObserverTags = []
         self._connect_signals()
         self._update_counter_preview()
 
@@ -30,7 +32,8 @@ class AssistController:
         self.measure_ui.volumeSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onVolumeChanged)
         self.measure_ui.createMarkupButton.connect("clicked()", self.onCreateMarkup)
         self.measure_ui.clearMarkupButton.connect("clicked()", self.onClearMarkups)
-        self.measure_ui.updateButton.connect("clicked()", self.onUpdateMeasurements)
+        self.measure_ui.markupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onMarkupNodeChanged)
+        self.measure_ui.flipXAxisCheckBox.connect("toggled(bool)", lambda *_: self.onUpdateMeasurements())
 
         self.export_ui.exportButton.connect("clicked()", self.onExport)
         self.export_ui.browseButton.connect("clicked()", self.onBrowse)
@@ -71,25 +74,62 @@ class AssistController:
         markupNode.RemoveAllControlPoints()
         self.measure_ui.statusLabel.text = "既存のポイントをクリアしました。"
 
+    def onMarkupNodeChanged(self, node):
+        if self._observedMarkupNode is not None:
+            for tag in self._markupObserverTags:
+                self._observedMarkupNode.RemoveObserver(tag)
+        self._markupObserverTags = []
+        self._observedMarkupNode = node
+
+        if node is not None:
+            tag = node.AddObserver(slicer.vtkMRMLMarkupsNode.PointAddedEvent, self._onPointAdded)
+            self._markupObserverTags.append(tag)
+            for event in [
+                slicer.vtkMRMLMarkupsNode.PointModifiedEvent,
+                slicer.vtkMRMLMarkupsNode.PointRemovedEvent,
+            ]:
+                tag = node.AddObserver(event, lambda *_: self.onUpdateMeasurements())
+                self._markupObserverTags.append(tag)
+            # 既存ノード選択時: 未ラベルの点にのみラベルを付与
+            self._assignLandmarkLabels(node)
+
+        self.onUpdateMeasurements()
+
+    def _onPointAdded(self, *_):
+        markupNode = self.measure_ui.markupSelector.currentNode()
+        if markupNode is None:
+            return
+        n = markupNode.GetNumberOfControlPoints()
+        if n == 0:
+            return
+        # 既存ラベルを収集して次の空きラベルを新規点に割り当てる
+        used = {markupNode.GetNthControlPointLabel(i) for i in range(n - 1)}
+        for label in REQUIRED_LABELS_ORDERED:
+            if label not in used:
+                markupNode.SetNthControlPointLabel(n - 1, label)
+                break
+        self.onUpdateMeasurements()
+
     def onUpdateMeasurements(self):
         markupNode = self.measure_ui.markupSelector.currentNode()
         if markupNode is None:
-            self.measure_ui.statusLabel.text = "エラー: Markupsが選択されていません。"
-            return
-        self._assignLandmarkLabels(markupNode)
-        if markupNode.GetNumberOfFiducials() != len(REQUIRED_LABELS_ORDERED):
-            self.measure_ui.statusLabel.text = "エラー: マークアップ点が5個ではありません。指定の順番で5点を配置してください。"
             return
 
-        points = {}
+        # ラベル→座標のマップを構築（インデックスではなくラベルで引く）
+        label_to_pos = {}
         coordsRAS = [0.0, 0.0, 0.0]
-        for idx, label in enumerate(REQUIRED_LABELS_ORDERED):
-            markupNode.GetNthFiducialPosition(idx, coordsRAS)
-            x = coordsRAS[0]
-            y = coordsRAS[1]
-            if self.measure_ui.flipXAxisCheckBox.isChecked():
-                x = -x
-            points[label] = (x, y)
+        for i in range(markupNode.GetNumberOfControlPoints()):
+            label = markupNode.GetNthControlPointLabel(i)
+            if label in REQUIRED_LABELS_ORDERED:
+                markupNode.GetNthControlPointPosition(i, coordsRAS)
+                x = -coordsRAS[0] if self.measure_ui.flipXAxisCheckBox.isChecked() else coordsRAS[0]
+                label_to_pos[label] = (x, coordsRAS[1])
+
+        if len(label_to_pos) < len(REQUIRED_LABELS_ORDERED):
+            self.measure_ui.statusLabel.text = f"ランドマーク: {len(label_to_pos)} / {len(REQUIRED_LABELS_ORDERED)} 点"
+            return
+
+        points = {label: label_to_pos[label] for label in REQUIRED_LABELS_ORDERED}
 
         try:
             angles = self.logic.compute_angles_from_points(points)
@@ -206,9 +246,18 @@ class AssistController:
         return fiducialNode
 
     def _assignLandmarkLabels(self, markupNode):
-        count = min(markupNode.GetNumberOfFiducials(), len(REQUIRED_LABELS_ORDERED))
-        for i in range(count):
-            markupNode.SetNthControlPointLabel(i, REQUIRED_LABELS_ORDERED[i])
+        """未ラベルの点にのみ次の空きラベルを付与する（既存ラベルは上書きしない）。"""
+        used = set()
+        unlabeled = []
+        for i in range(markupNode.GetNumberOfControlPoints()):
+            label = markupNode.GetNthControlPointLabel(i)
+            if label in REQUIRED_LABELS_ORDERED:
+                used.add(label)
+            else:
+                unlabeled.append(i)
+        available = [l for l in REQUIRED_LABELS_ORDERED if l not in used]
+        for idx, label in zip(unlabeled, available):
+            markupNode.SetNthControlPointLabel(idx, label)
 
     def _updateResultsTable(self, anglesDict):
         params = ["PI", "PT", "SS", "LL"]

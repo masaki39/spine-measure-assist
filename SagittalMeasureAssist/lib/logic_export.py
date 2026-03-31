@@ -35,27 +35,36 @@ class ExportLogic:
         ijk_h = ras_to_ijk.MultiplyPoint(ras_h)
         return ijk_h[:3]
 
+    def _label_to_index(self, markupNode):
+        """ラベル名 → コントロールポイントインデックスのマップを返す。"""
+        mapping = {}
+        for i in range(markupNode.GetNumberOfControlPoints()):
+            label = markupNode.GetNthControlPointLabel(i)
+            if label in REQUIRED_LABELS_ORDERED:
+                mapping[label] = i
+        missing = [l for l in REQUIRED_LABELS_ORDERED if l not in mapping]
+        if missing:
+            raise ValueError(f"ラベルが見つかりません: {', '.join(missing)}")
+        return mapping
+
     def _collect_landmarks_ijk(self, markupNode, volumeNode):
-        self._validate_count(markupNode)
+        label_idx = self._label_to_index(markupNode)
         coords = {}
         ras = [0.0, 0.0, 0.0]
-        for i, label in enumerate(REQUIRED_LABELS_ORDERED):
-            markupNode.SetNthControlPointLabel(i, label)
-            markupNode.GetNthControlPointPositionWorld(i, ras)
+        for label in REQUIRED_LABELS_ORDERED:
+            markupNode.GetNthControlPointPositionWorld(label_idx[label], ras)
             ijk = self._ras_to_ijk(volumeNode, ras)
             coords[label] = {"i": float(ijk[0]), "j": float(ijk[1]), "k": float(ijk[2])}
         return coords
 
     def _collect_landmarks_ras_2d(self, markupNode):
-        self._validate_count(markupNode)
+        label_idx = self._label_to_index(markupNode)
         points = {}
         coordsRAS = [0.0, 0.0, 0.0]
-        for idx, label in enumerate(REQUIRED_LABELS_ORDERED):
-            markupNode.SetNthControlPointLabel(idx, label)
-            markupNode.GetNthFiducialPosition(idx, coordsRAS)
+        for label in REQUIRED_LABELS_ORDERED:
+            markupNode.GetNthControlPointPosition(label_idx[label], coordsRAS)
             x = -coordsRAS[0] if self.flip_x_axis else coordsRAS[0]
-            y = coordsRAS[1]
-            points[label] = (x, y)
+            points[label] = (x, coordsRAS[1])
         return points
 
     def _volume_metadata(self, volumeNode):

@@ -63,11 +63,6 @@ class MeasureUI:
         self.instructionsLabel.wordWrap = True
         form.addRow("ランドマーク手順:", self.instructionsLabel)
 
-        self.updateButton = qt.QPushButton("計測を更新")
-        self.updateButton.toolTip = "Compute PI, PT, SS, and LL from the current 5 landmarks."
-        self.updateButton.enabled = True
-        form.addRow(self.updateButton)
-
         self.resultsTable = qt.QTableWidget()
         self.resultsTable.setRowCount(4)
         self.resultsTable.setColumnCount(2)
