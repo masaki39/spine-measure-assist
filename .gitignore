@@ -33,3 +33,5 @@ env/
 
 # Data directory (DICOM, exported training data)
 data/
+dataset/
+runs/
