@@ -23,21 +23,21 @@ def _percentile_clip_norm(img: np.ndarray, p_low=1.0, p_high=99.0) -> np.ndarray
 
 def _resize_bilinear(img: np.ndarray, new_h: int, new_w: int) -> np.ndarray:
     """
-    Minimal bilinear resize using separable 1D interpolation (no external deps).
+    Bilinear resize with align_corners=False to match torch.nn.functional.interpolate.
     img: (H,W)
     """
     h, w = img.shape
-    x_old = np.arange(w)
-    x_new = np.linspace(0, w - 1, new_w)
-    # interpolate along x for each row
+    # align_corners=False: x_src = (x_dst + 0.5) * w / new_w - 0.5
+    x_new = (np.arange(new_w) + 0.5) * (w / new_w) - 0.5
+    x_new = np.clip(x_new, 0, w - 1)
+    y_new = (np.arange(new_h) + 0.5) * (h / new_h) - 0.5
+    y_new = np.clip(y_new, 0, h - 1)
     tmp = np.zeros((h, new_w), dtype=np.float32)
     for i in range(h):
-        tmp[i] = np.interp(x_new, x_old, img[i])
-    y_old = np.arange(h)
-    y_new = np.linspace(0, h - 1, new_h)
+        tmp[i] = np.interp(x_new, np.arange(w), img[i])
     out = np.zeros((new_h, new_w), dtype=np.float32)
     for j in range(new_w):
-        out[:, j] = np.interp(y_new, y_old, tmp[:, j])
+        out[:, j] = np.interp(y_new, np.arange(h), tmp[:, j])
     return out
 
 
@@ -67,8 +67,9 @@ class OnnxInferenceLogic:
     def load_model(self, model_path: str, target_hw: Tuple[int, int]):
         try:
             import onnxruntime as ort
-        except ImportError as exc:
-            raise ImportError("onnxruntime がインストールされていません。`uv sync --extra ml` を実行してください。") from exc
+        except ImportError:
+            slicer.util.pip_install("onnxruntime")
+            import onnxruntime as ort
 
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"モデルが見つかりません: {model_path}")
@@ -77,6 +78,20 @@ class OnnxInferenceLogic:
         self.input_name = self.session.get_inputs()[0].name
         self.output_name = self.session.get_outputs()[0].name
         self.model_path = model_path
+        # M1: 入力サイズ検証
+        model_shape = self.session.get_inputs()[0].shape  # [batch, 1, H, W]
+        if isinstance(model_shape[2], int) and isinstance(model_shape[3], int):
+            if model_shape[2] != target_hw[0] or model_shape[3] != target_hw[1]:
+                raise ValueError(
+                    f"モデルの入力サイズ ({model_shape[2]}x{model_shape[3]}) と"
+                    f"UI設定 ({target_hw[0]}x{target_hw[1]}) が一致しません。"
+                )
+        # M3: ランドマーク数検証
+        n_outputs = self.session.get_outputs()[0].shape[1]
+        if isinstance(n_outputs, int) and n_outputs != len(REQUIRED_KEYS):
+            raise ValueError(
+                f"モデルのランドマーク数 ({n_outputs}) が期待値 ({len(REQUIRED_KEYS)}) と異なります。"
+            )
 
     def _extract_slice(self, volumeNode):
         arr = slicer.util.arrayFromVolume(volumeNode)

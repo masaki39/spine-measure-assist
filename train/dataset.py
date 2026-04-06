@@ -94,6 +94,8 @@ class HeatmapDataset(Dataset):
         img_np = np.load(npy_path)
         # Accept shape (H,W) or (D,H,W); use first slice if 3D.
         if img_np.ndim == 3:
+            if img_np.shape[0] > 1:
+                print(f"WARNING: {npy_path} は {img_np.shape[0]} スライスありますが、最初の1枚のみ使用します。")
             img_np = img_np[0]
         if img_np.ndim != 2:
             raise ValueError(f"Unsupported image shape {img_np.shape} for {npy_path}")

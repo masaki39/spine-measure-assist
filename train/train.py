@@ -68,11 +68,16 @@ def main():
         resize=tuple(args.resize),
         sigma=args.sigma,
     )
-    # simple split: 90/10
+    # 90/10 split; 1サンプルのみの場合は訓練・検証共用
     n_total = len(dataset)
-    n_val = max(1, n_total // 10)
-    n_train = n_total - n_val
-    train_set, val_set = torch.utils.data.random_split(dataset, [n_train, n_val])
+    if n_total == 1:
+        print("WARNING: サンプルが1件のみ。訓練データを検証にも使用します。")
+        train_set = dataset
+        val_set = dataset
+    else:
+        n_val = max(1, n_total // 10)
+        n_train = n_total - n_val
+        train_set, val_set = torch.utils.data.random_split(dataset, [n_train, n_val])
 
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
     val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)

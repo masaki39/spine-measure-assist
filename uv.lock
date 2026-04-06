@@ -2,6 +2,10 @@ version = 1
 revision = 3
 requires-python = ">=3.12"
 
+[options]
+exclude-newer = "2026-04-05T01:32:41.184268Z"
+exclude-newer-span = "PT24H"
+
 [[package]]
 name = "anglist"
 version = "0.1.0"
