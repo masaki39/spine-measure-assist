@@ -23,7 +23,7 @@ def parse_args():
     p.add_argument("--batch-size", type=int, default=4, help="How many samples processed together in one step (fits GPU/CPU memory)")
     p.add_argument("--lr", type=float, default=1e-3, help="Learning rate (step size for optimization)")
     p.add_argument("--resize", type=int, nargs=2, default=[512, 512], metavar=("H", "W"), help="Target size after aspect-ratio padding")
-    p.add_argument("--sigma", type=float, default=3.0, help="Gaussian sigma (px) for landmark heatmaps; larger spreads targets wider")
+    p.add_argument("--sigma", type=float, default=15.0, help="Gaussian sigma (px) for landmark heatmaps; larger spreads targets wider")
     p.add_argument("--num-workers", type=int, default=2, help="Data loading threads (increase if CPU has cores to spare)")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu", help="cpu or cuda")
     return p.parse_args()
