@@ -1,11 +1,20 @@
-# Sagittal Measure Assist
+# 🦴 Sagittal Measure Assist
 
 脊椎側面X線（DICOM）から椎体ランドマークを手動で配置し、脊椎矢状面アライメント（PI/PT/SS/LL）を計測するための **3D Slicer 拡張**。
 計測データを学習用にエクスポートし、AIモデルを訓練してランドマーク配置の自動化も目指せる。
 
+<details>
+<summary>💡 ONNXモデルとは？</summary>
+
+ONNX（Open Neural Network Exchange）は、異なるフレームワーク間でAIモデルを共有するための標準フォーマット。
+PyTorchで訓練したモデルをONNXに変換することで、`onnxruntime` を使ってCPUのみの環境（3D Slicer内など）でも高速に推論できる。
+GPU不要・依存が少ない点が特徴。
+
+</details>
+
 ---
 
-## 全体の流れ
+## 🔄 全体の流れ
 
 ```
 [1. 計測のみ]
@@ -23,25 +32,18 @@ ONNXモデル + DICOM → ランドマーク自動配置 → 角度確認
 
 ---
 
-## セットアップ
+## ⚙️ セットアップ
 
 ### Slicer拡張のインストール
 1. 3D Slicerを起動
 2. `Edit > Application Settings > Modules > Additional module paths` に `SagittalMeasureAssist/` フォルダを追加
 3. Slicerを再起動 → モジュールリストに "Sagittal Measure Assist" が表示される
 
-### 自動推論を使う場合（追加）
-SlicerのPython Consoleで `onnxruntime` をインストール：
-```python
-import pip
-pip.main(["install", "onnxruntime"])
-```
-
 ---
 
-## 使い方
+## 📋 使い方
 
-### STEP 1: DICOMを読み込む
+### STEP 1: 📂 DICOMを読み込む
 
 1. Slicerのメニューから `File > Add DICOM Data` を開く
 2. DICOMファイルをインポートし、**Load** ボタンで読み込む
@@ -49,7 +51,7 @@ pip.main(["install", "onnxruntime"])
    - スライスビューが自動更新される
    - エクスポート用のケースIDにPatient IDが自動入力される
 
-### STEP 2: ランドマークを配置する
+### STEP 2: 📍 ランドマークを配置する
 
 「計測」セクションで **新規作成 / 1点追加** ボタンを使い、以下の順に5点を置く：
 
@@ -63,11 +65,11 @@ pip.main(["install", "onnxruntime"])
 
 > **画像が左右逆の場合**: 「左右反転補正」にチェックを入れる。
 
-### STEP 3: 角度を確認する
+### STEP 3: 📐 角度を確認する
 
 **計測を更新** ボタンを押すと PI / PT / SS / LL（度）が表示される。
 
-### STEP 4: 学習データをエクスポートする（任意）
+### STEP 4: 💾 学習データをエクスポートする（任意）
 
 「エクスポート」セクションで：
 1. **出力先フォルダ**を指定
@@ -82,9 +84,7 @@ pip.main(["install", "onnxruntime"])
 | `{ケースID}_volume.nrrd` | ボリューム本体 |
 | `{ケースID}_landmarks.json` | ランドマーク座標 + 角度 + メタデータ |
 
----
-
-## モデルの訓練（Slicer外部）
+### STEP 5: 🧠 モデルを訓練する（任意・Slicer外部）
 
 複数ケースをエクスポートしたら、以下の手順でモデルを訓練する。
 
@@ -105,16 +105,16 @@ uv run python train/export_onnx.py \
   --height 512 --width 512
 ```
 
+> 💡 **GPU環境での学習**: `train/train_colab.ipynb` を使うとGoogle Colab上でGPUを使って訓練できる。
+
 学習の仕組み（概要）：
 - 画像を512×512にリサイズ（縦横比を維持してパディング）
 - 各ランドマークに2Dガウスを置いた5枚のヒートマップを教師信号に使用
 - 軽量UNetでヒートマップを予測し、MSEで学習
 
----
+### STEP 6: 🤖 自動推論を使う（任意）
 
-## 自動推論（Slicer内）
-
-訓練済みONNXモデルで5点を自動配置できる。
+訓練済みONNXモデルで5点を自動配置できる。`onnxruntime` は初回実行時に自動インストールされる。
 
 1. 「自動推論 (ONNX)」セクションでモデルファイル（`.onnx`）を選択
 2. 入力サイズを学習時と合わせる（デフォルト: 512×512）
@@ -122,7 +122,7 @@ uv run python train/export_onnx.py \
 
 ---
 
-## テスト
+## 🧪 テスト
 
 ```bash
 uv run -m pytest
@@ -130,7 +130,7 @@ uv run -m pytest
 
 ---
 
-## ディレクトリ構成
+## 📁 ディレクトリ構成
 
 ```
 SagittalMeasureAssist/   # Slicer拡張本体
@@ -145,6 +145,16 @@ SagittalMeasureAssist/   # Slicer拡張本体
     logic_inference.py    # ONNX推論処理
 
 train/                   # 学習・変換スクリプト（Slicer外部）
+  train.py               # 訓練メインスクリプト
+  model.py               # SmallUNetアーキテクチャ
+  dataset.py             # HeatmapDataset
+  export_onnx.py         # PyTorch → ONNX変換
+  infer_onnx.py          # スタンドアロン推論デモ
+  train_colab.ipynb      # Google Colab用ノートブック
+
+dataset/                 # エクスポート済み学習データ（.npy/.json/.nrrd）
+runs/                    # 学習済みモデル（best.pt, last.pt, best.onnx）
 data/                    # DICOMファイル置き場（Patient IDでリネーム済み）
+tests/                   # テストスイート
 scripts/                 # DICOMメタデータ調査スクリプト
 ```
