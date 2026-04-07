@@ -93,7 +93,7 @@ def lumbosacral_lordosis_deg(v_L1, v_S1):
     return wrap_signed_angle(ll)
 
 
-REQUIRED_KEYS = ["FH", "S1_ant", "S1_post", "L1_ant", "L1_post"]
+REQUIRED_KEYS = ["L1_ant", "L1_post", "S1_ant", "S1_post", "FH"]
 
 
 def compute_angles_from_points(points):
