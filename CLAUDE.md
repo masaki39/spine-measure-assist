@@ -3,7 +3,7 @@
 ## プロジェクト概要
 
 脊椎側面X線（DICOM）から椎体ランドマークを検出し、矢状面アライメント角度を計測する支援ツール。
-- `SagittalMeasureAssist/` — UI付き計測アプリ（PySimpleGUI）
+- `SagittalMeasureAssist/` — UI付き計測アプリ（3D Slicer拡張）
 - `train/` — ランドマーク検出モデルの訓練・ONNX出力
 - `data/` — DICOMファイル置き場（Patient's ID でリネーム済み）
 

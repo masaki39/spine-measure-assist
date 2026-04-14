@@ -128,17 +128,30 @@ class OnnxInferenceLogic:
         ras_h = mat.MultiplyPoint(ijk_h)
         return ras_h[:3]
 
-    def predict_and_place(self, volumeNode, markupNode):
+    def _build_overlay_heatmap(self, heatmaps: np.ndarray, orig_shape: Tuple[int, int], scale: float, pad_x: float, pad_y: float) -> np.ndarray:
+        """各ランドマークのheatmapを元画像サイズにリサイズして返す。返り値: (L, H_orig, W_orig)"""
+        h_orig, w_orig = orig_shape
+        hm = heatmaps[0]  # (L, H, W)
+        new_h = int(round(h_orig * scale))
+        new_w = int(round(w_orig * scale))
+        channels = []
+        for c in hm:
+            crop = c[int(pad_y): int(pad_y) + new_h, int(pad_x): int(pad_x) + new_w]
+            channels.append(_resize_bilinear(crop, h_orig, w_orig))
+        return np.stack(channels, axis=0)
+
+    def predict_and_place(self, volumeNode, markupNode) -> Tuple[List[Tuple[float, float]], np.ndarray]:
         if self.session is None:
             raise RuntimeError("モデルがロードされていません。")
         img2d = self._extract_slice(volumeNode)
         inp, scale, pad_x, pad_y = self._preprocess(img2d)
         outputs = self.session.run([self.output_name], {self.input_name: inp})
         coords_ij = self._postprocess(outputs[0], scale, pad_x, pad_y)
+        heatmap_2d = self._build_overlay_heatmap(outputs[0], img2d.shape, scale, pad_x, pad_y)
         # 書き込み
         markupNode.RemoveAllControlPoints()
         for idx, (x, y) in enumerate(coords_ij):
             ras = self._ijk_to_ras(volumeNode, x, y, 0.0)
             markupNode.AddControlPoint(ras[0], ras[1], ras[2])
             markupNode.SetNthControlPointLabel(idx, REQUIRED_KEYS[idx])
-        return coords_ij
+        return coords_ij, heatmap_2d

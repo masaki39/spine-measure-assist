@@ -4,6 +4,7 @@ import os
 
 import qt
 import slicer
+import vtk
 
 from logic_export import ExportLogic, REQUIRED_LABELS_ORDERED
 from logic_inference import OnnxInferenceLogic
@@ -24,6 +25,9 @@ class AssistController:
         self.infer = OnnxInferenceLogic()
         self._observedMarkupNode = None
         self._markupObserverTags = []
+        self._heatmap_channels = None  # (L, H, W)
+        self._heatmap_volume_node = None
+        self._heatmap_volume_node_ref = None  # volumeNode reference for overlay
         self._connect_signals()
         self._update_counter_preview()
 
@@ -40,6 +44,9 @@ class AssistController:
         self.export_ui.prefixEdit.textChanged.connect(lambda *_: self._update_counter_preview())
         self.auto_ui.modelBrowseButton.connect("clicked()", self.onBrowseModel)
         self.auto_ui.runButton.connect("clicked()", self.onRunInference)
+        self.auto_ui.heatmapCheckBox.connect("toggled(bool)", self.onHeatmapToggled)
+        self.auto_ui.landmarkCombo.connect("currentIndexChanged(int)", self.onHeatmapLandmarkChanged)
+        self.auto_ui.opacitySlider.connect("valueChanged(int)", self.onHeatmapOpacityChanged)
 
     # --- Handlers ---
     def onVolumeChanged(self, volumeNode):
@@ -169,12 +176,17 @@ class AssistController:
         try:
             # 再ロードは毎回（単純性優先）。必要ならパスが同じ場合はスキップも可。
             self.infer.load_model(model_path, (target_h, target_w))
-            coords_ij = self.infer.predict_and_place(volumeNode, markupNode)
+            coords_ij, heatmap_2d = self.infer.predict_and_place(volumeNode, markupNode)
         except Exception as exc:
             logging.exception("Inference failed")
             self.auto_ui.statusLabel.setText(f"エラー: 推論に失敗しました ({exc})")
             return
 
+        self._heatmap_channels = heatmap_2d  # (L, H, W)
+        self._heatmap_volume_node_ref = volumeNode
+        self._show_heatmap_overlay(volumeNode, heatmap_2d)
+        for w in [self.auto_ui.heatmapCheckBox, self.auto_ui.landmarkCombo, self.auto_ui.opacitySlider]:
+            w.setEnabled(True)
         self.auto_ui.statusLabel.setText("推論完了: Markupsに自動配置しました。")
         # 計測も更新しておく
         self.onUpdateMeasurements()
@@ -234,6 +246,72 @@ class AssistController:
             self._update_counter_preview()
 
     # --- Helpers ---
+    def onHeatmapToggled(self, checked):
+        layoutManager = slicer.app.layoutManager()
+        for sliceName in layoutManager.sliceViewNames():
+            compositeNode = layoutManager.sliceWidget(sliceName).sliceLogic().GetSliceCompositeNode()
+            if checked and self._heatmap_volume_node is not None:
+                compositeNode.SetForegroundVolumeID(self._heatmap_volume_node.GetID())
+            else:
+                compositeNode.SetForegroundVolumeID("")
+
+    def onHeatmapLandmarkChanged(self, index):
+        if self._heatmap_channels is None or self._heatmap_volume_node is None:
+            return
+        import numpy as np
+        if index == 0:
+            hm_2d = np.max(self._heatmap_channels, axis=0)
+        else:
+            hm_2d = self._heatmap_channels[index - 1]
+        slicer.util.updateVolumeFromArray(self._heatmap_volume_node, hm_2d[np.newaxis])
+
+    def onHeatmapOpacityChanged(self, value):
+        self.auto_ui.opacityLabel.setText(f"{value}%")
+        layoutManager = slicer.app.layoutManager()
+        for sliceName in layoutManager.sliceViewNames():
+            compositeNode = layoutManager.sliceWidget(sliceName).sliceLogic().GetSliceCompositeNode()
+            compositeNode.SetForegroundOpacity(value / 100.0)
+
+    def _show_heatmap_overlay(self, volumeNode, heatmap_channels):
+        """heatmap_channels (L,H,W) をSlicerのForegroundVolumeとして半透明オーバーレイ表示する。"""
+        import numpy as np
+        # 初期表示はコンボの選択に従う（デフォルト0=全体合成）
+        idx = self.auto_ui.landmarkCombo.currentIndex
+        hm_2d = np.max(heatmap_channels, axis=0) if idx == 0 else heatmap_channels[idx - 1]
+        hm_volume = hm_2d[np.newaxis]  # (1, H, W)
+
+        hm_node = slicer.mrmlScene.GetFirstNodeByName("HeatmapOverlay")
+        if hm_node is None:
+            hm_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "HeatmapOverlay")
+        self._heatmap_volume_node = hm_node
+
+        slicer.util.updateVolumeFromArray(hm_node, hm_volume)
+
+        # 元ボリュームのIJKtoRAS行列をコピーして位置合わせ
+        mat = vtk.vtkMatrix4x4()
+        volumeNode.GetIJKToRASMatrix(mat)
+        hm_node.SetIJKToRASMatrix(mat)
+
+        # カラーマップ・ウィンドウレベル設定
+        if hm_node.GetDisplayNode() is None:
+            hm_node.CreateDefaultDisplayNodes()
+        displayNode = hm_node.GetDisplayNode()
+        color_node = slicer.mrmlScene.GetFirstNodeByName("ColdToHot")
+        if color_node:
+            displayNode.SetAndObserveColorNodeID(color_node.GetID())
+        else:
+            displayNode.SetAndObserveColorNodeID("vtkMRMLColorTableNodeRainbow")
+        displayNode.AutoWindowLevelOff()
+        displayNode.SetWindowLevelMinMax(0.0, 1.0)
+
+        # 全スライスビューにForegroundとしてセット
+        opacity = self.auto_ui.opacitySlider.value / 100.0
+        layoutManager = slicer.app.layoutManager()
+        for sliceName in layoutManager.sliceViewNames():
+            compositeNode = layoutManager.sliceWidget(sliceName).sliceLogic().GetSliceCompositeNode()
+            compositeNode.SetForegroundVolumeID(hm_node.GetID())
+            compositeNode.SetForegroundOpacity(opacity)
+
     def _ensureMarkupNodeExists(self):
         current = self.measure_ui.markupSelector.currentNode()
         if current and current.IsA("vtkMRMLMarkupsFiducialNode"):
