@@ -122,6 +122,26 @@ uv run python train/export_onnx.py \
 
 推論後はモデルが出力したヒートマップをスライスビューに半透明でオーバーレイ表示できる：
 
+### STEP 7: 📊 モデルを定量評価する（任意）
+
+複数サンプルに対してMRE（Mean Radial Error）とSDR（Successful Detection Rate）を一括計算できる。
+
+```bash
+uv run python train/infer_onnx.py --model runs/model.onnx --dir dataset/
+```
+
+出力例：
+
+```
+=== MRE Evaluation (N=186 samples) ===
+Landmark       MRE(px)   MRE(mm)   SDR@2mm   SDR@4mm
+L1_ant           14.16      6.07     12.4%     40.9%
+...
+Overall          13.56      5.82     11.3%     39.2%
+```
+
+指標の詳細は `runs/evaluation_metrics.md` を参照。
+
 | コントロール | 説明 |
 |---|---|
 | **Heatmapを表示** チェックボックス | オーバーレイのオン/オフ |
@@ -157,11 +177,11 @@ train/                   # 学習・変換スクリプト（Slicer外部）
   model.py               # SmallUNetアーキテクチャ
   dataset.py             # HeatmapDataset
   export_onnx.py         # PyTorch → ONNX変換
-  infer_onnx.py          # スタンドアロン推論デモ
+  infer_onnx.py          # スタンドアロン推論・MRE評価スクリプト
   train_colab.ipynb      # Google Colab用ノートブック
 
 dataset/                 # エクスポート済み学習データ（.npy/.json/.nrrd）
-runs/                    # 学習済みモデル（best.pt, last.pt, best.onnx）
+runs/                    # 学習済みモデル（best.pt, model.onnx）+ 評価結果
 data/                    # DICOMファイル置き場（Patient IDでリネーム済み）
 tests/                   # テストスイート
 scripts/                 # DICOMメタデータ調査スクリプト
