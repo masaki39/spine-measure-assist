@@ -192,6 +192,11 @@ train/                   # 学習・変換スクリプト（Slicer外部）
   infer_onnx.py          # スタンドアロン推論・MRE評価スクリプト
   train_colab.ipynb      # Google Colab用ノートブック（初回学習）
   finetune_colab.ipynb   # Google Colab用ノートブック（追加学習）
+  learning_curve/        # 学習曲線分析（5-fold CV × 6段階）
+    README.md            # 進捗タスクリスト（30ジョブ）
+    00_prepare_folds.ipynb   # フォールド割り当て生成（1回のみ）
+    01_train_one_job.ipynb   # 1ジョブ学習（FOLD × SIZE を指定）
+    02_plot_curve.ipynb      # 結果集計 & 学習曲線プロット
 
 dataset/                 # エクスポート済み学習データ（.npy/.json/.nrrd）
 runs/                    # 学習済みモデル（best.pt, model.onnx）+ 評価結果
