@@ -26,6 +26,7 @@ def parse_args():
     p.add_argument("--sigma", type=float, default=15.0, help="Gaussian sigma (px) for landmark heatmaps; larger spreads targets wider")
     p.add_argument("--num-workers", type=int, default=2, help="Data loading threads (increase if CPU has cores to spare)")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu", help="cpu or cuda")
+    p.add_argument("--checkpoint", default=None, help="Path to .pt checkpoint to resume/finetune from")
     return p.parse_args()
 
 
@@ -84,6 +85,15 @@ def main():
 
     model = SmallUNet(num_landmarks=len(LANDMARK_ORDER)).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+
+    if args.checkpoint:
+        ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model_state"])
+        optimizer.load_state_dict(ckpt["optimizer_state"])
+        # optimizer_state に保存された旧LRを --lr の値で上書き
+        for pg in optimizer.param_groups:
+            pg["lr"] = args.lr
+        print(f"Loaded checkpoint: {args.checkpoint} (epoch {ckpt.get('epoch', '?')}, val {ckpt.get('val_loss', '?'):.4f})")
 
     best_val = float("inf")
     for epoch in range(1, args.epochs + 1):

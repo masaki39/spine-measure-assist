@@ -105,7 +105,19 @@ uv run python train/export_onnx.py \
   --height 512 --width 512
 ```
 
-> 💡 **GPU環境での学習**: `train/train_colab.ipynb` を使うとGoogle Colab上でGPUを使って訓練できる。
+既存モデルを出発点に追加データで継続学習（ファインチューニング）する場合：
+
+```bash
+uv run python train/train.py \
+  --data-dir /path/to/new_data \
+  --checkpoint runs/best.pt \
+  --lr 1e-4 \
+  --epochs 50
+```
+
+> ファインチューニングでは学習率を小さめ（`1e-4` 程度）にするのが推奨。新データのみで学習すると旧データのパターンを忘れやすい（破滅的忘却）ため、可能であれば旧データも混ぜて学習する。
+
+> 💡 **GPU環境での学習**: `train/train_colab.ipynb` を使うとGoogle Colab上でGPUを使って訓練できる。追加データで継続学習する場合は `train/finetune_colab.ipynb` を使う。
 
 学習の仕組み（概要）：
 - 画像を512×512にリサイズ（縦横比を維持してパディング）
@@ -178,7 +190,8 @@ train/                   # 学習・変換スクリプト（Slicer外部）
   dataset.py             # HeatmapDataset
   export_onnx.py         # PyTorch → ONNX変換
   infer_onnx.py          # スタンドアロン推論・MRE評価スクリプト
-  train_colab.ipynb      # Google Colab用ノートブック
+  train_colab.ipynb      # Google Colab用ノートブック（初回学習）
+  finetune_colab.ipynb   # Google Colab用ノートブック（追加学習）
 
 dataset/                 # エクスポート済み学習データ（.npy/.json/.nrrd）
 runs/                    # 学習済みモデル（best.pt, model.onnx）+ 評価結果
