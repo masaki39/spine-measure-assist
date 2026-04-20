@@ -417,12 +417,13 @@ class AssistController:
         displayNode.AutoWindowLevelOff()
         displayNode.SetWindowLevelMinMax(0.0, 1.0)
 
-        opacity = self.auto_ui.opacitySlider.value / 100.0
-        layoutManager = slicer.app.layoutManager()
-        for sliceName in layoutManager.sliceViewNames():
-            compositeNode = layoutManager.sliceWidget(sliceName).sliceLogic().GetSliceCompositeNode()
-            compositeNode.SetForegroundVolumeID(hm_node.GetID())
-            compositeNode.SetForegroundOpacity(opacity)
+        if self.auto_ui.heatmapCheckBox.isChecked():
+            opacity = self.auto_ui.opacitySlider.value / 100.0
+            layoutManager = slicer.app.layoutManager()
+            for sliceName in layoutManager.sliceViewNames():
+                compositeNode = layoutManager.sliceWidget(sliceName).sliceLogic().GetSliceCompositeNode()
+                compositeNode.SetForegroundVolumeID(hm_node.GetID())
+                compositeNode.SetForegroundOpacity(opacity)
 
     # --- Private helpers ---
     def _ensureMarkupNodeExists(self):
