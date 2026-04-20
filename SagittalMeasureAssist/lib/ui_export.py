@@ -9,37 +9,45 @@ class ExportUI:
 
     def __init__(self, parentLayout):
         self.button = ctk.ctkCollapsibleButton()
-        self.button.text = "エクスポート（学習データ）"
+        self.button.text = "Export (Training Data)"
         parentLayout.addWidget(self.button)
 
         form = qt.QFormLayout(self.button)
 
         self.outputDirEdit = qt.QLineEdit()
-        self.outputDirEdit.placeholderText = "出力先フォルダ（例: /path/to/dataset）"
-        self.browseButton = qt.QPushButton("参照...")
+        self.outputDirEdit.placeholderText = "Output folder (e.g. /path/to/dataset)"
+        self.browseButton = qt.QPushButton("Browse...")
         dirLayout = qt.QHBoxLayout()
         dirLayout.addWidget(self.outputDirEdit, 1)
         dirLayout.addWidget(self.browseButton)
-        form.addRow("出力先:", dirLayout)
+        form.addRow("Output dir:", dirLayout)
 
         self.caseIdEdit = qt.QLineEdit()
-        self.caseIdEdit.placeholderText = "手入力する場合はこちら（例: case001）"
-        form.addRow("ケースID:", self.caseIdEdit)
+        self.caseIdEdit.placeholderText = "Manual case ID (e.g. K16) — leave blank for auto"
+        self.caseIdEdit.setToolTip(
+            "Manual case ID. Overrides auto-numbering.\n"
+            "Auto-filled from DICOM Patient ID when a volume is loaded."
+        )
+        form.addRow("Case ID:", self.caseIdEdit)
 
         self.prefixEdit = qt.QLineEdit("case")
-        self.overwriteCheck = qt.QCheckBox("既存があれば上書きする")
+        self.prefixEdit.setToolTip(
+            "Prefix for auto-generated IDs (e.g. 'case' → case001, case002...).\n"
+            "The counter increments after each successful export."
+        )
+        self.overwriteCheck = qt.QCheckBox("Overwrite existing")
         self.overwriteCheck.checked = False
         self.nextIdLabel = qt.QLabel("case001")
         autoLayout = qt.QHBoxLayout()
-        autoLayout.addWidget(qt.QLabel("プレフィックス:"))
+        autoLayout.addWidget(qt.QLabel("Prefix:"))
         autoLayout.addWidget(self.prefixEdit)
-        autoLayout.addWidget(qt.QLabel("次番号:"))
+        autoLayout.addWidget(qt.QLabel("Next ID:"))
         autoLayout.addWidget(self.nextIdLabel)
-        form.addRow("自動採番:", autoLayout)
+        form.addRow("Auto-numbering:", autoLayout)
         form.addRow("", self.overwriteCheck)
 
-        self.exportButton = qt.QPushButton("エクスポート")
-        self.exportButton.toolTip = ".npy/.nrrd とランドマークJSON(角度付き)を書き出します。"
+        self.exportButton = qt.QPushButton("Export")
+        self.exportButton.toolTip = "Export .npy / .nrrd and landmark JSON with computed angles."
         form.addRow(self.exportButton)
 
         self.exportStatusLabel = qt.QLabel("")

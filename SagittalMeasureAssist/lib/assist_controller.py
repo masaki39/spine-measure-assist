@@ -9,6 +9,26 @@ import vtk
 from logic_export import ExportLogic, REQUIRED_LABELS_ORDERED
 from logic_inference import OnnxInferenceLogic
 
+_VECTOR_COLORS = {
+    "L1": (0.2, 0.8, 1.0),     # cyan
+    "S1": (1.0, 0.6, 0.1),     # orange
+    "pelvis": (0.4, 1.0, 0.4), # green
+}
+# L1/S1: full line (extended); pelvis: segment only
+_VECTOR_MODES = {"L1": "Line", "S1": "Line", "pelvis": "Segment"}
+
+
+def _extend_to_line(p1, p2, extend=1000.0):
+    """Extend a segment outward in both directions to approximate an infinite line."""
+    dx, dy, dz = p2[0]-p1[0], p2[1]-p1[1], p2[2]-p1[2]
+    length = math.sqrt(dx*dx + dy*dy + dz*dz)
+    if length < 1e-6:
+        return p1, p2
+    nx, ny, nz = dx/length, dy/length, dz/length
+    q1 = (p1[0]-nx*extend, p1[1]-ny*extend, p1[2]-nz*extend)
+    q2 = (p2[0]+nx*extend, p2[1]+ny*extend, p2[2]+nz*extend)
+    return q1, q2
+
 
 class AssistController:
     """
@@ -27,17 +47,21 @@ class AssistController:
         self._markupObserverTags = []
         self._heatmap_channels = None  # (L, H, W)
         self._heatmap_volume_node = None
-        self._heatmap_volume_node_ref = None  # volumeNode reference for overlay
+        self._heatmap_volume_node_ref = None
+        self._vector_line_nodes = {}  # key: "L1" / "S1" / "pelvis"
         self._connect_signals()
         self._update_counter_preview()
 
     # --- Signal wiring ---
     def _connect_signals(self):
         self.measure_ui.volumeSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onVolumeChanged)
+        self.measure_ui.prevVolumeButton.connect("clicked()", self.onVolumePrev)
+        self.measure_ui.nextVolumeButton.connect("clicked()", self.onVolumeNext)
         self.measure_ui.createMarkupButton.connect("clicked()", self.onCreateMarkup)
         self.measure_ui.clearMarkupButton.connect("clicked()", self.onClearMarkups)
         self.measure_ui.markupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onMarkupNodeChanged)
         self.measure_ui.flipXAxisCheckBox.connect("toggled(bool)", lambda *_: self.onUpdateMeasurements())
+        self.measure_ui.showVectorsCheck.connect("toggled(bool)", self._onShowVectorsToggled)
 
         self.export_ui.exportButton.connect("clicked()", self.onExport)
         self.export_ui.browseButton.connect("clicked()", self.onBrowse)
@@ -47,6 +71,27 @@ class AssistController:
         self.auto_ui.heatmapCheckBox.connect("toggled(bool)", self.onHeatmapToggled)
         self.auto_ui.landmarkCombo.connect("currentIndexChanged(int)", self.onHeatmapLandmarkChanged)
         self.auto_ui.opacitySlider.connect("valueChanged(int)", self.onHeatmapOpacityChanged)
+
+    # --- Volume navigation ---
+    def _volume_nodes(self):
+        return [n for n in slicer.util.getNodesByClass("vtkMRMLScalarVolumeNode")
+                if not n.GetHideFromEditors()]
+
+    def onVolumePrev(self):
+        nodes = self._volume_nodes()
+        if not nodes:
+            return
+        current = self.measure_ui.volumeSelector.currentNode()
+        idx = nodes.index(current) if current in nodes else 0
+        self.measure_ui.volumeSelector.setCurrentNode(nodes[(idx - 1) % len(nodes)])
+
+    def onVolumeNext(self):
+        nodes = self._volume_nodes()
+        if not nodes:
+            return
+        current = self.measure_ui.volumeSelector.currentNode()
+        idx = nodes.index(current) if current in nodes else -1
+        self.measure_ui.volumeSelector.setCurrentNode(nodes[(idx + 1) % len(nodes)])
 
     # --- Handlers ---
     def onVolumeChanged(self, volumeNode):
@@ -70,16 +115,16 @@ class AssistController:
     def onCreateMarkup(self):
         fiducialNode = self._ensureMarkupNodeExists()
         self.measure_ui.markupSelector.setCurrentNode(fiducialNode)
-        slicer.modules.markups.logic().StartPlaceMode(0)  # place a single point then exit place mode
-        self.measure_ui.statusLabel.text = "1点だけ配置モードです。点を置いたら、次の点も同じボタンで再度配置してください。"
+        slicer.modules.markups.logic().StartPlaceMode(0)
+        self.measure_ui.statusLabel.text = "Placement mode: click to place one point. Press the button again to add the next point."
 
     def onClearMarkups(self):
         markupNode = self.measure_ui.markupSelector.currentNode()
         if markupNode is None:
-            self.measure_ui.statusLabel.text = "クリアできるMarkupsが選択されていません。"
+            self.measure_ui.statusLabel.text = "No Markups node selected."
             return
         markupNode.RemoveAllControlPoints()
-        self.measure_ui.statusLabel.text = "既存のポイントをクリアしました。"
+        self.measure_ui.statusLabel.text = "All points cleared."
 
     def onMarkupNodeChanged(self, node):
         if self._observedMarkupNode is not None:
@@ -87,6 +132,9 @@ class AssistController:
                 self._observedMarkupNode.RemoveObserver(tag)
         self._markupObserverTags = []
         self._observedMarkupNode = node
+
+        for vnode in self._vector_line_nodes.values():
+            vnode.SetDisplayVisibility(0)
 
         if node is not None:
             tag = node.AddObserver(slicer.vtkMRMLMarkupsNode.PointAddedEvent, self._onPointAdded)
@@ -97,7 +145,6 @@ class AssistController:
             ]:
                 tag = node.AddObserver(event, lambda *_: self.onUpdateMeasurements())
                 self._markupObserverTags.append(tag)
-            # 既存ノード選択時: 未ラベルの点にのみラベルを付与
             self._assignLandmarkLabels(node)
 
         self.onUpdateMeasurements()
@@ -109,7 +156,6 @@ class AssistController:
         n = markupNode.GetNumberOfControlPoints()
         if n == 0:
             return
-        # 既存ラベルを収集して次の空きラベルを新規点に割り当てる
         used = {markupNode.GetNthControlPointLabel(i) for i in range(n - 1)}
         for label in REQUIRED_LABELS_ORDERED:
             if label not in used:
@@ -122,8 +168,8 @@ class AssistController:
         if markupNode is None:
             return
 
-        # ラベル→座標のマップを構築（インデックスではなくラベルで引く）
-        label_to_pos = {}
+        label_to_pos = {}    # 2D (x, y) for angle computation, with optional x-flip
+        label_to_ras3d = {}  # 3D RAS for vector visualization
         coordsRAS = [0.0, 0.0, 0.0]
         for i in range(markupNode.GetNumberOfControlPoints()):
             label = markupNode.GetNthControlPointLabel(i)
@@ -131,9 +177,12 @@ class AssistController:
                 markupNode.GetNthControlPointPosition(i, coordsRAS)
                 x = -coordsRAS[0] if self.measure_ui.flipXAxisCheckBox.isChecked() else coordsRAS[0]
                 label_to_pos[label] = (x, coordsRAS[1])
+                label_to_ras3d[label] = (coordsRAS[0], coordsRAS[1], coordsRAS[2])
 
         if len(label_to_pos) < len(REQUIRED_LABELS_ORDERED):
-            self.measure_ui.statusLabel.text = f"ランドマーク: {len(label_to_pos)} / {len(REQUIRED_LABELS_ORDERED)} 点"
+            self.measure_ui.statusLabel.text = f"Landmarks: {len(label_to_pos)} / {len(REQUIRED_LABELS_ORDERED)}"
+            for vnode in self._vector_line_nodes.values():
+                vnode.SetDisplayVisibility(0)
             return
 
         points = {label: label_to_pos[label] for label in REQUIRED_LABELS_ORDERED}
@@ -141,15 +190,16 @@ class AssistController:
         try:
             angles = self.logic.compute_angles_from_points(points)
         except ValueError as exc:
-            self.measure_ui.statusLabel.text = f"エラー: {exc}"
+            self.measure_ui.statusLabel.text = f"Error: {exc}"
             return
 
         self._updateResultsTable(angles)
-        self.measure_ui.statusLabel.text = "計測を更新しました。"
+        self.measure_ui.statusLabel.text = "Measurements updated."
+        self._updateVectorOverlays(label_to_ras3d)
 
     def onBrowseModel(self):
         file_path = qt.QFileDialog.getOpenFileName(
-            slicer.util.mainWindow(), "ONNXモデルを選択", "", "ONNX (*.onnx)"
+            slicer.util.mainWindow(), "Select ONNX model", "", "ONNX (*.onnx)"
         )
         if file_path:
             self.auto_ui.modelPathEdit.setText(file_path)
@@ -157,7 +207,7 @@ class AssistController:
     def onRunInference(self):
         volumeNode = self.measure_ui.volumeSelector.currentNode()
         if volumeNode is None:
-            self.auto_ui.statusLabel.setText("エラー: Volumeが選択されていません。")
+            self.auto_ui.statusLabel.setText("Error: no volume selected.")
             return
 
         markupNode = self.measure_ui.markupSelector.currentNode()
@@ -167,19 +217,18 @@ class AssistController:
 
         model_path = self.auto_ui.modelPathEdit.text.strip()
         if not model_path:
-            self.auto_ui.statusLabel.setText("エラー: ONNXモデルパスを指定してください。")
+            self.auto_ui.statusLabel.setText("Error: no ONNX model path specified.")
             return
 
         target_h = int(self.auto_ui.heightSpin.value)
         target_w = int(self.auto_ui.widthSpin.value)
 
         try:
-            # 再ロードは毎回（単純性優先）。必要ならパスが同じ場合はスキップも可。
             self.infer.load_model(model_path, (target_h, target_w))
             coords_ij, heatmap_2d = self.infer.predict_and_place(volumeNode, markupNode)
         except Exception as exc:
             logging.exception("Inference failed")
-            self.auto_ui.statusLabel.setText(f"エラー: 推論に失敗しました ({exc})")
+            self.auto_ui.statusLabel.setText(f"Error: inference failed ({exc})")
             return
 
         self._heatmap_channels = heatmap_2d  # (L, H, W)
@@ -187,13 +236,12 @@ class AssistController:
         self._show_heatmap_overlay(volumeNode, heatmap_2d)
         for w in [self.auto_ui.heatmapCheckBox, self.auto_ui.landmarkCombo, self.auto_ui.opacitySlider]:
             w.setEnabled(True)
-        self.auto_ui.statusLabel.setText("推論完了: Markupsに自動配置しました。")
-        # 計測も更新しておく
+        self.auto_ui.statusLabel.setText("Inference complete. Landmarks placed in Markups.")
         self.onUpdateMeasurements()
 
     def onBrowse(self):
         directory = qt.QFileDialog.getExistingDirectory(
-            slicer.util.mainWindow(), "出力先フォルダを選択"
+            slicer.util.mainWindow(), "Select output folder"
         )
         if directory:
             self.export_ui.outputDirEdit.text = directory
@@ -205,18 +253,18 @@ class AssistController:
         manualCaseId = self.export_ui.caseIdEdit.text.strip()
 
         if volumeNode is None:
-            self.export_ui.exportStatusLabel.text = "エラー: Volumeが選択されていません。"
+            self.export_ui.exportStatusLabel.text = "Error: no volume selected."
             return
         if markupNode is None:
-            self.export_ui.exportStatusLabel.text = "エラー: Markupsが選択されていません。"
+            self.export_ui.exportStatusLabel.text = "Error: no Markups node selected."
             return
         if not outputDir:
-            self.export_ui.exportStatusLabel.text = "エラー: 出力先フォルダを指定してください。"
+            self.export_ui.exportStatusLabel.text = "Error: no output folder specified."
             return
 
         caseId = manualCaseId if manualCaseId else self._find_next_case_id(outputDir)
         if caseId is None:
-            self.export_ui.exportStatusLabel.text = "エラー: 利用可能なケースIDを見つけられませんでした。"
+            self.export_ui.exportStatusLabel.text = "Error: no available case ID found."
             return
 
         try:
@@ -229,15 +277,15 @@ class AssistController:
                 overwrite=self.export_ui.overwriteCheck.isChecked(),
             )
         except ValueError as exc:
-            self.export_ui.exportStatusLabel.text = f"エラー: {exc}"
+            self.export_ui.exportStatusLabel.text = f"Error: {exc}"
             return
         except Exception:
             logging.exception("Export failed")
-            self.export_ui.exportStatusLabel.text = "エラー: エクスポートに失敗しました。詳細はPython Consoleを確認してください。"
+            self.export_ui.exportStatusLabel.text = "Error: export failed. See Python Console for details."
             return
 
         self.export_ui.exportStatusLabel.text = (
-            "エクスポート完了: "
+            "Export complete: "
             f"{os.path.basename(result['npy'])}, "
             f"{os.path.basename(result['json'])}"
         )
@@ -245,7 +293,59 @@ class AssistController:
             self.counter += 1
             self._update_counter_preview()
 
-    # --- Helpers ---
+    # --- Vector overlay ---
+    def _updateVectorOverlays(self, label_to_ras3d):
+        s1_ant = label_to_ras3d["S1_ant"]
+        s1_post = label_to_ras3d["S1_post"]
+        s1_mid = (
+            (s1_ant[0] + s1_post[0]) / 2,
+            (s1_ant[1] + s1_post[1]) / 2,
+            (s1_ant[2] + s1_post[2]) / 2,
+        )
+        pts = dict(label_to_ras3d, _S1_mid=s1_mid)
+
+        definitions = {
+            "L1":     ("L1_ant", "L1_post"),
+            "S1":     ("S1_ant", "S1_post"),
+            "pelvis": ("FH", "_S1_mid"),
+        }
+        visible = self.measure_ui.showVectorsCheck.isChecked()
+
+        for name, (p1_key, p2_key) in definitions.items():
+            if name not in self._vector_line_nodes:
+                node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsLineNode", f"Vec_{name}")
+                node.SetLocked(True)
+                node.CreateDefaultDisplayNodes()
+                dn = node.GetDisplayNode()
+                if dn:
+                    r, g, b = _VECTOR_COLORS[name]
+                    dn.SetSelectedColor(r, g, b)
+                    dn.SetColor(r, g, b)
+                    dn.SetTextScale(0)
+                self._vector_line_nodes[name] = node
+
+            node = self._vector_line_nodes[name]
+            ep1 = pts[p1_key]
+            ep2 = pts[p2_key]
+            if _VECTOR_MODES[name] == "Line":
+                ep1, ep2 = _extend_to_line(ep1, ep2)
+
+            n_pts = node.GetNumberOfControlPoints()
+            if n_pts < 2:
+                node.RemoveAllControlPoints()
+                node.AddControlPoint(list(ep1))
+                node.AddControlPoint(list(ep2))
+            else:
+                node.SetNthControlPointPosition(0, ep1[0], ep1[1], ep1[2])
+                node.SetNthControlPointPosition(1, ep2[0], ep2[1], ep2[2])
+
+            node.SetDisplayVisibility(1 if visible else 0)
+
+    def _onShowVectorsToggled(self, checked):
+        for vnode in self._vector_line_nodes.values():
+            vnode.SetDisplayVisibility(1 if checked else 0)
+
+    # --- Heatmap helpers ---
     def onHeatmapToggled(self, checked):
         layoutManager = slicer.app.layoutManager()
         for sliceName in layoutManager.sliceViewNames():
@@ -273,9 +373,7 @@ class AssistController:
             compositeNode.SetForegroundOpacity(value / 100.0)
 
     def _show_heatmap_overlay(self, volumeNode, heatmap_channels):
-        """heatmap_channels (L,H,W) をSlicerのForegroundVolumeとして半透明オーバーレイ表示する。"""
         import numpy as np
-        # 初期表示はコンボの選択に従う（デフォルト0=全体合成）
         idx = self.auto_ui.landmarkCombo.currentIndex
         hm_2d = np.max(heatmap_channels, axis=0) if idx == 0 else heatmap_channels[idx - 1]
         hm_volume = hm_2d[np.newaxis]  # (1, H, W)
@@ -283,16 +381,15 @@ class AssistController:
         hm_node = slicer.mrmlScene.GetFirstNodeByName("HeatmapOverlay")
         if hm_node is None:
             hm_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "HeatmapOverlay")
+            hm_node.SetHideFromEditors(True)  # exclude from volume selectors
         self._heatmap_volume_node = hm_node
 
         slicer.util.updateVolumeFromArray(hm_node, hm_volume)
 
-        # 元ボリュームのIJKtoRAS行列をコピーして位置合わせ
         mat = vtk.vtkMatrix4x4()
         volumeNode.GetIJKToRASMatrix(mat)
         hm_node.SetIJKToRASMatrix(mat)
 
-        # カラーマップ・ウィンドウレベル設定
         if hm_node.GetDisplayNode() is None:
             hm_node.CreateDefaultDisplayNodes()
         displayNode = hm_node.GetDisplayNode()
@@ -304,7 +401,6 @@ class AssistController:
         displayNode.AutoWindowLevelOff()
         displayNode.SetWindowLevelMinMax(0.0, 1.0)
 
-        # 全スライスビューにForegroundとしてセット
         opacity = self.auto_ui.opacitySlider.value / 100.0
         layoutManager = slicer.app.layoutManager()
         for sliceName in layoutManager.sliceViewNames():
@@ -312,6 +408,7 @@ class AssistController:
             compositeNode.SetForegroundVolumeID(hm_node.GetID())
             compositeNode.SetForegroundOpacity(opacity)
 
+    # --- Private helpers ---
     def _ensureMarkupNodeExists(self):
         current = self.measure_ui.markupSelector.currentNode()
         if current and current.IsA("vtkMRMLMarkupsFiducialNode"):
@@ -324,7 +421,6 @@ class AssistController:
         return fiducialNode
 
     def _assignLandmarkLabels(self, markupNode):
-        """未ラベルの点にのみ次の空きラベルを付与する（既存ラベルは上書きしない）。"""
         used = set()
         unlabeled = []
         for i in range(markupNode.GetNumberOfControlPoints()):
@@ -341,10 +437,7 @@ class AssistController:
         params = ["PI", "PT", "SS", "LL"]
         for i, name in enumerate(params):
             value = anglesDict.get(name, float("nan"))
-            if math.isnan(value):
-                text = "--"
-            else:
-                text = f"{value:.1f}°"
+            text = "--" if math.isnan(value) else f"{value:.1f}°"
             self.measure_ui.resultsTable.item(i, 1).setText(text)
 
     def _format_counter_preview(self):
@@ -366,3 +459,8 @@ class AssistController:
             if not (os.path.exists(npy) or os.path.exists(json_path) or os.path.exists(nrrd_path)):
                 return candidate
         return None
+
+    def cleanup(self):
+        for node in self._vector_line_nodes.values():
+            slicer.mrmlScene.RemoveNode(node)
+        self._vector_line_nodes = {}

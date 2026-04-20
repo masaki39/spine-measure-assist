@@ -65,6 +65,9 @@ class SagittalMeasureAssistWidget(ScriptedLoadableModuleWidget):
 
         self.layout.addStretch(1)
 
+    def cleanup(self):
+        self.controller.cleanup()
+
 
 class SagittalMeasureAssistLogic(ScriptedLoadableModuleLogic):
     """Geometry computations for sagittal parameters."""
