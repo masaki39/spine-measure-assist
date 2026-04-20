@@ -19,19 +19,6 @@ class AutoUI:
         modelLayout.addWidget(self.modelBrowseButton)
         form.addRow("ONNX model:", modelLayout)
 
-        sizeLayout = qt.QHBoxLayout()
-        self.heightSpin = qt.QSpinBox()
-        self.heightSpin.setRange(64, 2048)
-        self.heightSpin.setValue(512)
-        self.widthSpin = qt.QSpinBox()
-        self.widthSpin.setRange(64, 2048)
-        self.widthSpin.setValue(512)
-        sizeLayout.addWidget(qt.QLabel("H:"))
-        sizeLayout.addWidget(self.heightSpin)
-        sizeLayout.addWidget(qt.QLabel("W:"))
-        sizeLayout.addWidget(self.widthSpin)
-        form.addRow("Input size:", sizeLayout)
-
         self.runButton = qt.QPushButton("Run inference")
         form.addRow(self.runButton)
 

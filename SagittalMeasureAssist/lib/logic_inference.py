@@ -64,7 +64,7 @@ class OnnxInferenceLogic:
         self.model_path = None
         self.target_hw = (512, 512)
 
-    def load_model(self, model_path: str, target_hw: Tuple[int, int]):
+    def load_model(self, model_path: str):
         try:
             import onnxruntime as ort
         except ImportError:
@@ -73,19 +73,13 @@ class OnnxInferenceLogic:
 
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"モデルが見つかりません: {model_path}")
-        self.target_hw = target_hw
         self.session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
         self.input_name = self.session.get_inputs()[0].name
         self.output_name = self.session.get_outputs()[0].name
         self.model_path = model_path
-        # M1: 入力サイズ検証
         model_shape = self.session.get_inputs()[0].shape  # [batch, 1, H, W]
         if isinstance(model_shape[2], int) and isinstance(model_shape[3], int):
-            if model_shape[2] != target_hw[0] or model_shape[3] != target_hw[1]:
-                raise ValueError(
-                    f"モデルの入力サイズ ({model_shape[2]}x{model_shape[3]}) と"
-                    f"UI設定 ({target_hw[0]}x{target_hw[1]}) が一致しません。"
-                )
+            self.target_hw = (model_shape[2], model_shape[3])
         # M3: ランドマーク数検証
         n_outputs = self.session.get_outputs()[0].shape[1]
         if isinstance(n_outputs, int) and n_outputs != len(REQUIRED_KEYS):

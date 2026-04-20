@@ -24,8 +24,15 @@ def parse_args():
     p.add_argument("--image", help=".npy image path")
     p.add_argument("--json", help="Optional landmarks json to compare")
     p.add_argument("--dir", help="Dataset directory for batch MRE evaluation")
-    p.add_argument("--resize", type=int, nargs=2, default=[512, 512], metavar=("H", "W"))
+    p.add_argument("--resize", type=int, nargs=2, default=None, metavar=("H", "W"))
     return p.parse_args()
+
+
+def get_model_resize(sess, args_resize):
+    if args_resize is not None:
+        return args_resize
+    shape = sess.get_inputs()[0].shape  # [batch, 1, H, W]
+    return [shape[2], shape[3]]
 
 
 def preprocess(img_np, resize):
@@ -75,6 +82,7 @@ def _compute_errors(pred_coords, gt_coords, scale, pad_x, pad_y, spacing):
 
 def evaluate_dataset(args):
     ort_sess = ort.InferenceSession(args.model, providers=["CPUExecutionProvider"])
+    resize = get_model_resize(ort_sess, args.resize)
     data_dir = args.dir
 
     samples = []
@@ -97,7 +105,7 @@ def evaluate_dataset(args):
 
     for case_id, npy_path, json_path in samples:
         img_np = np.load(npy_path)
-        inp_t, scale, pad_x, pad_y = preprocess(img_np, args.resize)
+        inp_t, scale, pad_x, pad_y = preprocess(img_np, resize)
         ort_out = ort_sess.run(None, {"image": inp_t.numpy()})
         pred_coords = postprocess_heatmaps(ort_out[0])
 
@@ -147,9 +155,10 @@ def main():
         return
 
     ort_sess = ort.InferenceSession(args.model, providers=["CPUExecutionProvider"])
+    resize = get_model_resize(ort_sess, args.resize)
 
     img_np = np.load(args.image)
-    inp_t, scale, pad_x, pad_y = preprocess(img_np, args.resize)
+    inp_t, scale, pad_x, pad_y = preprocess(img_np, resize)
     ort_out = ort_sess.run(None, {"image": inp_t.numpy()})
     coords = postprocess_heatmaps(ort_out[0])
 

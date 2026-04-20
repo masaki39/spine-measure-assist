@@ -236,11 +236,8 @@ class AssistController:
             self.auto_ui.statusLabel.setText("Error: no ONNX model path specified.")
             return
 
-        target_h = int(self.auto_ui.heightSpin.value)
-        target_w = int(self.auto_ui.widthSpin.value)
-
         try:
-            self.infer.load_model(model_path, (target_h, target_w))
+            self.infer.load_model(model_path)
             coords_ij, heatmap_2d = self.infer.predict_and_place(volumeNode, markupNode)
         except Exception as exc:
             logging.exception("Inference failed")
