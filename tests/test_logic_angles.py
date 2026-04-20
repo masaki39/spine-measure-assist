@@ -63,3 +63,59 @@ def test_compute_angles_from_points():
 def test_compute_angles_missing():
     with pytest.raises(ValueError):
         angles.compute_angles_from_points({"FH": (0, 0)})
+
+
+def test_normalize_basic():
+    nx, ny = angles.normalize((3, 4))
+    assert math.isclose(nx, 0.6, abs_tol=1e-6)
+    assert math.isclose(ny, 0.8, abs_tol=1e-6)
+
+
+def test_normalize_zero_raises():
+    with pytest.raises(ValueError):
+        angles.normalize((0, 0))
+
+
+@pytest.mark.parametrize(
+    "v1,v2,expected",
+    [
+        ((1, 0), (0, 1), 90.0),
+        ((1, 0), (2, 0), 0.0),
+        ((1, 0), (-1, 0), 180.0),
+    ],
+)
+def test_angle_between_vectors(v1, v2, expected):
+    assert math.isclose(angles.angle_between_vectors(v1, v2), expected, abs_tol=1e-6)
+
+
+def test_angle_between_vectors_zero_raises():
+    with pytest.raises(ValueError):
+        angles.angle_between_vectors((0, 0), (1, 0))
+
+
+@pytest.mark.parametrize(
+    "angle,expected",
+    [
+        (90.0, 90.0),
+        (270.0, -90.0),
+        (-270.0, 90.0),
+        (180.0, 180.0),
+        (-180.0, -180.0),
+    ],
+)
+def test_wrap_signed_angle(angle, expected):
+    assert math.isclose(angles.wrap_signed_angle(angle), expected, abs_tol=1e-6)
+
+
+def test_lumbosacral_lordosis_deg_same_slope():
+    assert math.isclose(angles.lumbosacral_lordosis_deg((1, 0), (1, 0)), 0.0, abs_tol=1e-6)
+
+
+def test_signed_slope_angle_deg_zero_raises():
+    with pytest.raises(ValueError):
+        angles.signed_slope_angle_deg((0, 0))
+
+
+def test_signed_vertical_angle_deg_zero_raises():
+    with pytest.raises(ValueError):
+        angles.signed_vertical_angle_deg((0, 0))
