@@ -27,6 +27,7 @@ def parse_args():
     p.add_argument("--num-workers", type=int, default=2, help="Data loading threads (increase if CPU has cores to spare)")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu", help="cpu or cuda")
     p.add_argument("--checkpoint", default=None, help="Path to .pt checkpoint to resume/finetune from")
+    p.add_argument("--landmarks", default=None, help="Comma-separated landmark names (default: L1_ant,L1_post,S1_ant,S1_post,FH)")
     return p.parse_args()
 
 
@@ -58,16 +59,42 @@ def validate(model, loader, device):
     return total_loss / len(loader.dataset)
 
 
+def _build_model_with_landmark_transfer(ckpt, old_landmarks, new_landmarks, device):
+    """
+    Build SmallUNet with new_landmarks, transferring backbone + matched head channels from checkpoint.
+    New landmark channels are randomly initialized.
+    """
+    new_model = SmallUNet(num_landmarks=len(new_landmarks)).to(device)
+    old_state = ckpt["model_state"]
+    new_state = new_model.state_dict()
+
+    for key in new_state:
+        if not key.startswith("head.") and key in old_state:
+            new_state[key] = old_state[key]
+
+    for new_idx, name in enumerate(new_landmarks):
+        if name in old_landmarks:
+            old_idx = old_landmarks.index(name)
+            new_state["head.weight"][new_idx] = old_state["head.weight"][old_idx]
+            new_state["head.bias"][new_idx] = old_state["head.bias"][old_idx]
+
+    new_model.load_state_dict(new_state)
+    return new_model
+
+
 def main():
     args = parse_args()
     device = torch.device(args.device)
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
+    landmark_keys = [k.strip() for k in args.landmarks.split(",")] if args.landmarks else LANDMARK_ORDER
+
     dataset = HeatmapDataset(
         data_dir=args.data_dir,
         resize=tuple(args.resize),
         sigma=args.sigma,
+        landmark_keys=landmark_keys,
     )
     # 90/10 split; 1サンプルのみの場合は訓練・検証共用
     n_total = len(dataset)
@@ -83,14 +110,24 @@ def main():
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
     val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
-    model = SmallUNet(num_landmarks=len(LANDMARK_ORDER)).to(device)
+    model = SmallUNet(num_landmarks=len(landmark_keys)).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
     if args.checkpoint:
         ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt["model_state"])
-        optimizer.load_state_dict(ckpt["optimizer_state"])
-        # optimizer_state に保存された旧LRを --lr の値で上書き
+        old_landmarks = ckpt.get("config", {}).get("landmarks") or LANDMARK_ORDER
+        if isinstance(old_landmarks, str):
+            old_landmarks = [k.strip() for k in old_landmarks.split(",")]
+
+        if old_landmarks == landmark_keys:
+            model.load_state_dict(ckpt["model_state"])
+            optimizer.load_state_dict(ckpt["optimizer_state"])
+        else:
+            print(f"ランドマーク構成が変わりました: {old_landmarks} → {landmark_keys}")
+            print("エンコーダ/デコーダを移植し、一致するヘッドチャネルをコピーします。")
+            model = _build_model_with_landmark_transfer(ckpt, old_landmarks, landmark_keys, device)
+            optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+
         for pg in optimizer.param_groups:
             pg["lr"] = args.lr
         print(f"Loaded checkpoint: {args.checkpoint} (epoch {ckpt.get('epoch', '?')}, val {ckpt.get('val_loss', '?'):.4f})")
@@ -105,7 +142,7 @@ def main():
             "model_state": model.state_dict(),
             "optimizer_state": optimizer.state_dict(),
             "val_loss": val_loss,
-            "config": vars(args),
+            "config": {**vars(args), "landmarks": landmark_keys},
         }
         torch.save(ckpt, save_dir / "last.pt")
         if val_loss < best_val:

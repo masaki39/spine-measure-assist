@@ -6,7 +6,7 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "train")))
 
-from dataset import HeatmapDataset, _make_heatmaps, _percentile_clip_norm, _resize_with_padding
+from dataset import HeatmapDataset, LANDMARK_ORDER, _make_heatmaps, _percentile_clip_norm, _resize_with_padding
 
 
 def test_percentile_clip_norm_range():
@@ -69,6 +69,7 @@ def test_extract_coords_missing_key(tmp_path):
     ds.resize = (64, 64)
     ds.sigma = 3.0
     ds.percentile_clip = (1.0, 99.0)
+    ds.landmark_keys = LANDMARK_ORDER
     ds.samples = [("case", str(npy), str(json_path))]
     with pytest.raises(ValueError, match="Missing landmark"):
         ds[0]
@@ -85,6 +86,7 @@ def test_extract_coords_missing_landmarks_ijk(tmp_path):
     ds.resize = (64, 64)
     ds.sigma = 3.0
     ds.percentile_clip = (1.0, 99.0)
+    ds.landmark_keys = LANDMARK_ORDER
     ds.samples = [("case", str(npy), str(json_path))]
     with pytest.raises(ValueError, match="Missing landmarks_ijk"):
         ds[0]

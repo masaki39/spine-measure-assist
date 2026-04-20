@@ -64,11 +64,13 @@ class HeatmapDataset(Dataset):
         resize: Tuple[int, int] = (512, 512),
         sigma: float = 3.0,
         percentile_clip: Tuple[float, float] = (1.0, 99.0),
+        landmark_keys: List[str] = None,
     ):
         self.data_dir = data_dir
         self.resize = resize
         self.sigma = sigma
         self.percentile_clip = percentile_clip
+        self.landmark_keys = landmark_keys if landmark_keys is not None else LANDMARK_ORDER
         self.samples = self._discover_samples()
 
     def _discover_samples(self):
@@ -129,7 +131,7 @@ class HeatmapDataset(Dataset):
         if "landmarks_ijk" not in meta:
             raise ValueError("Missing landmarks_ijk in json")
         lm = meta["landmarks_ijk"]
-        for name in LANDMARK_ORDER:
+        for name in self.landmark_keys:
             if name not in lm:
                 raise ValueError(f"Missing landmark {name}")
             coords.append((lm[name]["i"], lm[name]["j"]))
