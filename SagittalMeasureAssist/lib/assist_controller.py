@@ -2,6 +2,7 @@ import logging
 import math
 import os
 
+import numpy as np
 import qt
 import slicer
 import vtk
@@ -47,7 +48,6 @@ class AssistController:
         self._markupObserverTags = []
         self._heatmap_channels = None  # (L, H, W)
         self._heatmap_volume_node = None
-        self._heatmap_volume_node_ref = None
         self._vector_line_nodes = {}  # key: "L1" / "S1" / "pelvis"
         self._shortcuts = []
         self._connect_signals()
@@ -132,15 +132,15 @@ class AssistController:
         fiducialNode = self._ensureMarkupNodeExists()
         self.measure_ui.markupSelector.setCurrentNode(fiducialNode)
         slicer.modules.markups.logic().StartPlaceMode(0)
-        self.measure_ui.statusLabel.text = "Placement mode: click to place one point. Press the button again to add the next point."
+        self.measure_ui.statusLabel.setText("Placement mode: click to place one point. Press the button again to add the next point.")
 
     def onClearMarkups(self):
         markupNode = self.measure_ui.markupSelector.currentNode()
         if markupNode is None:
-            self.measure_ui.statusLabel.text = "No Markups node selected."
+            self.measure_ui.statusLabel.setText("No Markups node selected.")
             return
         markupNode.RemoveAllControlPoints()
-        self.measure_ui.statusLabel.text = "All points cleared."
+        self.measure_ui.statusLabel.setText("All points cleared.")
 
     def onMarkupNodeChanged(self, node):
         if self._observedMarkupNode is not None:
@@ -196,7 +196,7 @@ class AssistController:
                 label_to_ras3d[label] = (coordsRAS[0], coordsRAS[1], coordsRAS[2])
 
         if len(label_to_pos) < len(REQUIRED_LABELS_ORDERED):
-            self.measure_ui.statusLabel.text = f"Landmarks: {len(label_to_pos)} / {len(REQUIRED_LABELS_ORDERED)}"
+            self.measure_ui.statusLabel.setText(f"Landmarks: {len(label_to_pos)} / {len(REQUIRED_LABELS_ORDERED)}")
             for vnode in self._vector_line_nodes.values():
                 vnode.SetDisplayVisibility(0)
             return
@@ -206,11 +206,11 @@ class AssistController:
         try:
             angles = self.logic.compute_angles_from_points(points)
         except ValueError as exc:
-            self.measure_ui.statusLabel.text = f"Error: {exc}"
+            self.measure_ui.statusLabel.setText(f"Error: {exc}")
             return
 
         self._updateResultsTable(angles)
-        self.measure_ui.statusLabel.text = "Measurements updated."
+        self.measure_ui.statusLabel.setText("Measurements updated.")
         self._updateVectorOverlays(label_to_ras3d)
 
     def onBrowseModel(self):
@@ -248,7 +248,6 @@ class AssistController:
             return
 
         self._heatmap_channels = heatmap_2d  # (L, H, W)
-        self._heatmap_volume_node_ref = volumeNode
         self._show_heatmap_overlay(volumeNode, heatmap_2d)
         for w in [self.auto_ui.heatmapCheckBox, self.auto_ui.landmarkCombo, self.auto_ui.opacitySlider]:
             w.setEnabled(True)
@@ -260,7 +259,7 @@ class AssistController:
             slicer.util.mainWindow(), "Select output folder"
         )
         if directory:
-            self.export_ui.outputDirEdit.text = directory
+            self.export_ui.outputDirEdit.setText(directory)
 
     def onExport(self):
         volumeNode = self.measure_ui.volumeSelector.currentNode()
@@ -269,18 +268,18 @@ class AssistController:
         manualCaseId = self.export_ui.caseIdEdit.text.strip()
 
         if volumeNode is None:
-            self.export_ui.exportStatusLabel.text = "Error: no volume selected."
+            self.export_ui.exportStatusLabel.setText("Error: no volume selected.")
             return
         if markupNode is None:
-            self.export_ui.exportStatusLabel.text = "Error: no Markups node selected."
+            self.export_ui.exportStatusLabel.setText("Error: no Markups node selected.")
             return
         if not outputDir:
-            self.export_ui.exportStatusLabel.text = "Error: no output folder specified."
+            self.export_ui.exportStatusLabel.setText("Error: no output folder specified.")
             return
 
         caseId = manualCaseId if manualCaseId else self._find_next_case_id(outputDir)
         if caseId is None:
-            self.export_ui.exportStatusLabel.text = "Error: no available case ID found."
+            self.export_ui.exportStatusLabel.setText("Error: no available case ID found.")
             return
 
         try:
@@ -293,14 +292,14 @@ class AssistController:
                 overwrite=self.export_ui.overwriteCheck.isChecked(),
             )
         except ValueError as exc:
-            self.export_ui.exportStatusLabel.text = f"Error: {exc}"
+            self.export_ui.exportStatusLabel.setText(f"Error: {exc}")
             return
         except Exception:
             logging.exception("Export failed")
-            self.export_ui.exportStatusLabel.text = "Error: export failed. See Python Console for details."
+            self.export_ui.exportStatusLabel.setText("Error: export failed. See Python Console for details.")
             return
 
-        self.export_ui.exportStatusLabel.text = (
+        self.export_ui.exportStatusLabel.setText(
             "Export complete: "
             f"{os.path.basename(result['npy'])}, "
             f"{os.path.basename(result['json'])}"
@@ -355,26 +354,25 @@ class AssistController:
                 node.SetNthControlPointPosition(0, ep1[0], ep1[1], ep1[2])
                 node.SetNthControlPointPosition(1, ep2[0], ep2[1], ep2[2])
 
-            node.SetDisplayVisibility(1 if visible else 0)
+            node.SetDisplayVisibility(int(visible))
 
     def _onShowVectorsToggled(self, checked):
         for vnode in self._vector_line_nodes.values():
-            vnode.SetDisplayVisibility(1 if checked else 0)
+            vnode.SetDisplayVisibility(int(checked))
 
     # --- Heatmap helpers ---
+    def _for_each_slice(self, callback):
+        lm = slicer.app.layoutManager()
+        for name in lm.sliceViewNames():
+            callback(lm.sliceWidget(name).sliceLogic().GetSliceCompositeNode())
+
     def onHeatmapToggled(self, checked):
-        layoutManager = slicer.app.layoutManager()
-        for sliceName in layoutManager.sliceViewNames():
-            compositeNode = layoutManager.sliceWidget(sliceName).sliceLogic().GetSliceCompositeNode()
-            if checked and self._heatmap_volume_node is not None:
-                compositeNode.SetForegroundVolumeID(self._heatmap_volume_node.GetID())
-            else:
-                compositeNode.SetForegroundVolumeID("")
+        vol_id = self._heatmap_volume_node.GetID() if checked and self._heatmap_volume_node is not None else ""
+        self._for_each_slice(lambda cn: cn.SetForegroundVolumeID(vol_id))
 
     def onHeatmapLandmarkChanged(self, index):
         if self._heatmap_channels is None or self._heatmap_volume_node is None:
             return
-        import numpy as np
         if index == 0:
             hm_2d = np.max(self._heatmap_channels, axis=0)
         else:
@@ -383,13 +381,9 @@ class AssistController:
 
     def onHeatmapOpacityChanged(self, value):
         self.auto_ui.opacityLabel.setText(f"{value}%")
-        layoutManager = slicer.app.layoutManager()
-        for sliceName in layoutManager.sliceViewNames():
-            compositeNode = layoutManager.sliceWidget(sliceName).sliceLogic().GetSliceCompositeNode()
-            compositeNode.SetForegroundOpacity(value / 100.0)
+        self._for_each_slice(lambda cn: cn.SetForegroundOpacity(value / 100.0))
 
     def _show_heatmap_overlay(self, volumeNode, heatmap_channels):
-        import numpy as np
         idx = self.auto_ui.landmarkCombo.currentIndex
         hm_2d = np.max(heatmap_channels, axis=0) if idx == 0 else heatmap_channels[idx - 1]
         hm_volume = hm_2d[np.newaxis]  # (1, H, W)
@@ -419,11 +413,11 @@ class AssistController:
 
         if self.auto_ui.heatmapCheckBox.isChecked():
             opacity = self.auto_ui.opacitySlider.value / 100.0
-            layoutManager = slicer.app.layoutManager()
-            for sliceName in layoutManager.sliceViewNames():
-                compositeNode = layoutManager.sliceWidget(sliceName).sliceLogic().GetSliceCompositeNode()
-                compositeNode.SetForegroundVolumeID(hm_node.GetID())
-                compositeNode.SetForegroundOpacity(opacity)
+            hm_id = hm_node.GetID()
+            def _apply(cn):
+                cn.SetForegroundVolumeID(hm_id)
+                cn.SetForegroundOpacity(opacity)
+            self._for_each_slice(_apply)
 
     # --- Private helpers ---
     def _ensureMarkupNodeExists(self):
@@ -446,7 +440,7 @@ class AssistController:
                 used.add(label)
             else:
                 unlabeled.append(i)
-        available = [l for l in REQUIRED_LABELS_ORDERED if l not in used]
+        available = [lbl for lbl in REQUIRED_LABELS_ORDERED if lbl not in used]
         for idx, label in zip(unlabeled, available):
             markupNode.SetNthControlPointLabel(idx, label)
 
