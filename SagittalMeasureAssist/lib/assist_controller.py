@@ -7,16 +7,9 @@ import qt
 import slicer
 import vtk
 
-from logic_export import ExportLogic, REQUIRED_LABELS_ORDERED
+from logic_export import ExportLogic
 from logic_inference import OnnxInferenceLogic
-
-_VECTOR_COLORS = {
-    "L1": (0.2, 0.8, 1.0),     # cyan
-    "S1": (1.0, 0.6, 0.1),     # orange
-    "pelvis": (0.4, 1.0, 0.4), # green
-}
-# L1/S1: full line (extended); pelvis: segment only
-_VECTOR_MODES = {"L1": "Line", "S1": "Line", "pelvis": "Segment"}
+from measurement_sets import PELVIC_SET, get_set, set_names
 
 
 def _extend_to_line(p1, p2, extend=1000.0):
@@ -42,6 +35,7 @@ class AssistController:
         self.export_ui = export_ui
         self.auto_ui = auto_ui
         self.logic = logic
+        self._active_set = PELVIC_SET
         self.counter = 1
         self.infer = OnnxInferenceLogic()
         self._observedMarkupNode = None
@@ -70,6 +64,8 @@ class AssistController:
 
     # --- Signal wiring ---
     def _connect_signals(self):
+        if self.measure_ui.setCombo is not None:
+            self.measure_ui.setCombo.connect("currentIndexChanged(int)", self.onSetChanged)
         self.measure_ui.volumeSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onVolumeChanged)
         self.measure_ui.prevVolumeButton.connect("clicked()", self.onVolumePrev)
         self.measure_ui.nextVolumeButton.connect("clicked()", self.onVolumeNext)
@@ -110,6 +106,19 @@ class AssistController:
         self.measure_ui.volumeSelector.setCurrentNode(nodes[(idx + 1) % len(nodes)])
 
     # --- Handlers ---
+    def onSetChanged(self, index):
+        name = self.measure_ui.setCombo.itemText(index)
+        self._active_set = get_set(name)
+        for vnode in self._vector_line_nodes.values():
+            vnode.SetDisplayVisibility(0)
+        self._vector_line_nodes = {}
+        self.measure_ui.update_for_set(self._active_set)
+        self.auto_ui.update_landmark_combo(self._active_set.point_labels)
+        markupNode = self.measure_ui.markupSelector.currentNode()
+        if markupNode is not None:
+            self._assignLandmarkLabels(markupNode)
+        self.onUpdateMeasurements()
+
     def onVolumeChanged(self, volumeNode):
         slicer.util.setSliceViewerLayers(background=volumeNode)
         if volumeNode is None:
@@ -173,7 +182,7 @@ class AssistController:
         if n == 0:
             return
         used = {markupNode.GetNthControlPointLabel(i) for i in range(n - 1)}
-        for label in REQUIRED_LABELS_ORDERED:
+        for label in self._active_set.point_labels:
             if label not in used:
                 markupNode.SetNthControlPointLabel(n - 1, label)
                 break
@@ -187,21 +196,22 @@ class AssistController:
         label_to_pos = {}    # 2D (x, y) for angle computation, with optional x-flip
         label_to_ras3d = {}  # 3D RAS for vector visualization
         coordsRAS = [0.0, 0.0, 0.0]
+        active_labels = self._active_set.point_labels
         for i in range(markupNode.GetNumberOfControlPoints()):
             label = markupNode.GetNthControlPointLabel(i)
-            if label in REQUIRED_LABELS_ORDERED:
+            if label in active_labels:
                 markupNode.GetNthControlPointPosition(i, coordsRAS)
                 x = -coordsRAS[0] if self.measure_ui.flipXAxisCheckBox.isChecked() else coordsRAS[0]
                 label_to_pos[label] = (x, coordsRAS[1])
                 label_to_ras3d[label] = (coordsRAS[0], coordsRAS[1], coordsRAS[2])
 
-        if len(label_to_pos) < len(REQUIRED_LABELS_ORDERED):
-            self.measure_ui.statusLabel.setText(f"Landmarks: {len(label_to_pos)} / {len(REQUIRED_LABELS_ORDERED)}")
+        if len(label_to_pos) < len(active_labels):
+            self.measure_ui.statusLabel.setText(f"Landmarks: {len(label_to_pos)} / {len(active_labels)}")
             for vnode in self._vector_line_nodes.values():
                 vnode.SetDisplayVisibility(0)
             return
 
-        points = {label: label_to_pos[label] for label in REQUIRED_LABELS_ORDERED}
+        points = {label: label_to_pos[label] for label in active_labels}
 
         try:
             angles = self.logic.compute_angles_from_points(points)
@@ -280,7 +290,7 @@ class AssistController:
             return
 
         try:
-            exporter = ExportLogic(flip_x_axis=self.measure_ui.flipXAxisCheckBox.isChecked())
+            exporter = ExportLogic(flip_x_axis=self.measure_ui.flipXAxisCheckBox.isChecked(), measurement_set=self._active_set)
             result = exporter.export_training_sample(
                 volumeNode=volumeNode,
                 markupNode=markupNode,
@@ -307,30 +317,21 @@ class AssistController:
 
     # --- Vector overlay ---
     def _updateVectorOverlays(self, label_to_ras3d):
-        s1_ant = label_to_ras3d["S1_ant"]
-        s1_post = label_to_ras3d["S1_post"]
-        s1_mid = (
-            (s1_ant[0] + s1_post[0]) / 2,
-            (s1_ant[1] + s1_post[1]) / 2,
-            (s1_ant[2] + s1_post[2]) / 2,
-        )
-        pts = dict(label_to_ras3d, _S1_mid=s1_mid)
+        pts = dict(label_to_ras3d)
+        for key, (a, b) in self._active_set.midpoint_definitions.items():
+            pa, pb = label_to_ras3d[a], label_to_ras3d[b]
+            pts[key] = ((pa[0]+pb[0])/2, (pa[1]+pb[1])/2, (pa[2]+pb[2])/2)
 
-        definitions = {
-            "L1":     ("L1_ant", "L1_post"),
-            "S1":     ("S1_ant", "S1_post"),
-            "pelvis": ("FH", "_S1_mid"),
-        }
         visible = self.measure_ui.showVectorsCheck.isChecked()
 
-        for name, (p1_key, p2_key) in definitions.items():
+        for name, (p1_key, p2_key) in self._active_set.vector_definitions.items():
             if name not in self._vector_line_nodes:
                 node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsLineNode", f"Vec_{name}")
                 node.SetLocked(True)
                 node.CreateDefaultDisplayNodes()
                 dn = node.GetDisplayNode()
                 if dn:
-                    r, g, b = _VECTOR_COLORS[name]
+                    r, g, b = self._active_set.vector_colors[name]
                     dn.SetSelectedColor(r, g, b)
                     dn.SetColor(r, g, b)
                     dn.SetTextScale(0)
@@ -339,7 +340,7 @@ class AssistController:
             node = self._vector_line_nodes[name]
             ep1 = pts[p1_key]
             ep2 = pts[p2_key]
-            if _VECTOR_MODES[name] == "Line":
+            if self._active_set.vector_modes[name] == "Line":
                 ep1, ep2 = _extend_to_line(ep1, ep2)
 
             n_pts = node.GetNumberOfControlPoints()
@@ -429,21 +430,21 @@ class AssistController:
         return fiducialNode
 
     def _assignLandmarkLabels(self, markupNode):
+        labels = self._active_set.point_labels
         used = set()
         unlabeled = []
         for i in range(markupNode.GetNumberOfControlPoints()):
             label = markupNode.GetNthControlPointLabel(i)
-            if label in REQUIRED_LABELS_ORDERED:
+            if label in labels:
                 used.add(label)
             else:
                 unlabeled.append(i)
-        available = [lbl for lbl in REQUIRED_LABELS_ORDERED if lbl not in used]
+        available = [lbl for lbl in labels if lbl not in used]
         for idx, label in zip(unlabeled, available):
             markupNode.SetNthControlPointLabel(idx, label)
 
     def _updateResultsTable(self, anglesDict):
-        params = ["PI", "PT", "SS", "LL"]
-        for i, name in enumerate(params):
+        for i, name in enumerate(self._active_set.angle_names):
             value = anglesDict.get(name, float("nan"))
             text = "--" if math.isnan(value) else f"{value:.1f}°"
             self.measure_ui.resultsTable.item(i, 1).setText(text)

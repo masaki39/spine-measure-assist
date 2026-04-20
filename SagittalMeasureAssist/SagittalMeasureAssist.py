@@ -25,6 +25,7 @@ if lib_path not in sys.path:
 
 import logic_angles
 from assist_controller import AssistController
+from measurement_sets import PELVIC_SET, set_names
 from ui_measure import MeasureUI
 from ui_export import ExportUI
 from ui_auto import AutoUI
@@ -56,7 +57,7 @@ class SagittalMeasureAssistWidget(ScriptedLoadableModuleWidget):
         self.logic = SagittalMeasureAssistLogic()
 
         # UI sections
-        self.measureUI = MeasureUI(self.layout)
+        self.measureUI = MeasureUI(self.layout, set_names=set_names(), initial_set=PELVIC_SET)
         self.exportUI = ExportUI(self.layout)
         self.autoUI = AutoUI(self.layout)
 

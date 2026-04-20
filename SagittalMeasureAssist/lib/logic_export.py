@@ -11,13 +11,15 @@ import slicer
 import vtk
 
 from logic_angles import compute_angles_from_points
+from measurement_sets import PELVIC_SET, MeasurementSetDef
 
 REQUIRED_LABELS_ORDERED = ["L1_ant", "L1_post", "S1_ant", "S1_post", "FH"]
 
 
 class ExportLogic:
-    def __init__(self, flip_x_axis=False):
+    def __init__(self, flip_x_axis=False, measurement_set: MeasurementSetDef = None):
         self.flip_x_axis = flip_x_axis
+        self._set = measurement_set if measurement_set is not None else PELVIC_SET
 
     def _check_overwrite(self, outputDir, caseId, overwrite):
         npy_path = os.path.join(outputDir, f"{caseId}_image.npy")
@@ -37,12 +39,13 @@ class ExportLogic:
 
     def _label_to_index(self, markupNode):
         """ラベル名 → コントロールポイントインデックスのマップを返す。"""
+        labels = self._set.point_labels
         mapping = {}
         for i in range(markupNode.GetNumberOfControlPoints()):
             label = markupNode.GetNthControlPointLabel(i)
-            if label in REQUIRED_LABELS_ORDERED:
+            if label in labels:
                 mapping[label] = i
-        missing = [l for l in REQUIRED_LABELS_ORDERED if l not in mapping]
+        missing = [l for l in labels if l not in mapping]
         if missing:
             raise ValueError(f"ラベルが見つかりません: {', '.join(missing)}")
         return mapping
@@ -51,7 +54,7 @@ class ExportLogic:
         label_idx = self._label_to_index(markupNode)
         coords = {}
         ras = [0.0, 0.0, 0.0]
-        for label in REQUIRED_LABELS_ORDERED:
+        for label in self._set.point_labels:
             markupNode.GetNthControlPointPositionWorld(label_idx[label], ras)
             ijk = self._ras_to_ijk(volumeNode, ras)
             coords[label] = {"i": float(ijk[0]), "j": float(ijk[1]), "k": float(ijk[2])}
@@ -61,7 +64,7 @@ class ExportLogic:
         label_idx = self._label_to_index(markupNode)
         points = {}
         coordsRAS = [0.0, 0.0, 0.0]
-        for label in REQUIRED_LABELS_ORDERED:
+        for label in self._set.point_labels:
             markupNode.GetNthControlPointPosition(label_idx[label], coordsRAS)
             x = -coordsRAS[0] if self.flip_x_axis else coordsRAS[0]
             points[label] = (x, coordsRAS[1])
@@ -76,8 +79,9 @@ class ExportLogic:
         return {"spacing": list(spacing), "ijk_to_ras": direction, "origin_ras": origin}
 
     def _validate_count(self, markupNode):
-        if markupNode.GetNumberOfControlPoints() != len(REQUIRED_LABELS_ORDERED):
-            raise ValueError("マークアップ点が5個ではありません。指定の順番で5点を配置してください。")
+        n = len(self._set.point_labels)
+        if markupNode.GetNumberOfControlPoints() != n:
+            raise ValueError(f"マークアップ点が{n}個ではありません。指定の順番で{n}点を配置してください。")
 
     def export_training_sample(self, volumeNode, markupNode, outputDir, caseId, overwrite=False):
         self._validate_count(markupNode)
@@ -92,7 +96,7 @@ class ExportLogic:
         landmarks_ijk = self._collect_landmarks_ijk(markupNode, volumeNode)
         metadata = self._volume_metadata(volumeNode)
         points_ras_2d = self._collect_landmarks_ras_2d(markupNode)
-        angles_deg = compute_angles_from_points(points_ras_2d)
+        angles_deg = self._set.compute_fn(points_ras_2d)
 
         with open(json_path, "w", encoding="utf-8") as fp:
             json.dump(

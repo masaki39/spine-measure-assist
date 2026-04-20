@@ -47,3 +47,9 @@ class AutoUI:
         self.statusLabel = qt.QLabel("")
         self.statusLabel.wordWrap = True
         form.addRow(self.statusLabel)
+
+    def update_landmark_combo(self, point_labels):
+        self.landmarkCombo.clear()
+        self.landmarkCombo.addItem("Composite")
+        for key in point_labels:
+            self.landmarkCombo.addItem(key)

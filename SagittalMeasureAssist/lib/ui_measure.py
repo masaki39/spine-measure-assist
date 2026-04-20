@@ -8,12 +8,22 @@ class MeasureUI:
     Builds the measurement panel (volume/markups selection, controls, results table).
     """
 
-    def __init__(self, parentLayout):
+    def __init__(self, parentLayout, set_names=None, initial_set=None):
         self.button = ctk.ctkCollapsibleButton()
         self.button.text = "Measure"
         parentLayout.addWidget(self.button)
 
         form = qt.QFormLayout(self.button)
+
+        if set_names and len(set_names) > 1:
+            self.setCombo = qt.QComboBox()
+            for name in set_names:
+                self.setCombo.addItem(name)
+            if initial_set:
+                self.setCombo.setCurrentText(initial_set.name)
+            form.addRow("Measurement Set:", self.setCombo)
+        else:
+            self.setCombo = None
 
         self.volumeSelector = slicer.qMRMLNodeComboBox()
         self.volumeSelector.nodeTypes = ["vtkMRMLScalarVolumeNode"]
@@ -73,15 +83,10 @@ class MeasureUI:
         )
         form.addRow(self.flipXAxisCheckBox)
 
-        self.instructionsLabel = qt.QLabel(
-            "Place 5 landmarks in order:\n"
-            "1) L1_ant  — L1 superior endplate, anterior edge\n"
-            "2) L1_post — L1 superior endplate, posterior edge\n"
-            "3) S1_ant  — S1 superior endplate, anterior edge\n"
-            "4) S1_post — S1 superior endplate, posterior edge\n"
-            "5) FH      — femoral head center (bilateral average)"
-        )
+        self.instructionsLabel = qt.QLabel("")
         self.instructionsLabel.wordWrap = True
+        if initial_set:
+            self._build_instructions(initial_set)
         form.addRow(self.instructionsLabel)
 
         self.showVectorsCheck = qt.QCheckBox("Show vectors (L1, S1, pelvis)")
@@ -94,21 +99,32 @@ class MeasureUI:
         form.addRow(self.showVectorsCheck)
 
         self.resultsTable = qt.QTableWidget()
-        self.resultsTable.setRowCount(4)
         self.resultsTable.setColumnCount(2)
         self.resultsTable.setHorizontalHeaderLabels(["Parameter", "Value (deg)"])
         self.resultsTable.verticalHeader().hide()
         self.resultsTable.horizontalHeader().setStretchLastSection(True)
-        params = ["PI", "PT", "SS", "LL"]
-        for i, name in enumerate(params):
+        if initial_set:
+            self._build_results_table(initial_set)
+        form.addRow("Results:", self.resultsTable)
+
+        self.statusLabel = qt.QLabel("")
+        self.statusLabel.wordWrap = True
+        form.addRow(self.statusLabel)
+
+    def _build_instructions(self, mset):
+        lines = "\n".join(f"{i+1}) {desc}" for i, desc in enumerate(mset.point_instructions))
+        self.instructionsLabel.setText(f"Place {len(mset.point_labels)} landmarks in order:\n" + lines)
+
+    def _build_results_table(self, mset):
+        self.resultsTable.setRowCount(len(mset.angle_names))
+        for i, name in enumerate(mset.angle_names):
             nameItem = qt.QTableWidgetItem(name)
             nameItem.setFlags(qt.Qt.ItemIsEnabled)
             self.resultsTable.setItem(i, 0, nameItem)
             valueItem = qt.QTableWidgetItem("--")
             valueItem.setFlags(qt.Qt.ItemIsEnabled)
             self.resultsTable.setItem(i, 1, valueItem)
-        form.addRow("Results:", self.resultsTable)
 
-        self.statusLabel = qt.QLabel("")
-        self.statusLabel.wordWrap = True
-        form.addRow(self.statusLabel)
+    def update_for_set(self, mset):
+        self._build_instructions(mset)
+        self._build_results_table(mset)
