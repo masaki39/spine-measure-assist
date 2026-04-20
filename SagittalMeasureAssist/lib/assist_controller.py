@@ -49,8 +49,24 @@ class AssistController:
         self._heatmap_volume_node = None
         self._heatmap_volume_node_ref = None
         self._vector_line_nodes = {}  # key: "L1" / "S1" / "pelvis"
+        self._shortcuts = []
         self._connect_signals()
+        self._setup_shortcuts()
         self._update_counter_preview()
+
+    # --- Shortcuts ---
+    def _setup_shortcuts(self):
+        bindings = [
+            (",", self.onVolumePrev),
+            (".", self.onVolumeNext),
+            ("r", self.onRunInference),
+            ("e", self.onExport),
+        ]
+        mw = slicer.util.mainWindow()
+        for key, slot in bindings:
+            sc = qt.QShortcut(qt.QKeySequence(key), mw)
+            sc.connect("activated()", slot)
+            self._shortcuts.append(sc)
 
     # --- Signal wiring ---
     def _connect_signals(self):
@@ -461,6 +477,10 @@ class AssistController:
         return None
 
     def cleanup(self):
+        for sc in self._shortcuts:
+            sc.setEnabled(False)
+            sc.deleteLater()
+        self._shortcuts = []
         for node in self._vector_line_nodes.values():
             slicer.mrmlScene.RemoveNode(node)
         self._vector_line_nodes = {}
