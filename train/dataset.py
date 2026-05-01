@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -53,6 +53,18 @@ def _make_heatmaps(coords: List[Tuple[float, float]], size: Tuple[int, int], sig
     return torch.stack(heatmaps, dim=0)  # (L,H,W)
 
 
+def _build_augmentation():
+    import albumentations as A
+    return A.Compose(
+        [
+            A.Rotate(limit=15, border_mode=0, p=0.8),
+            A.ElasticTransform(alpha=50, sigma=5, p=0.5),
+            A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
+        ],
+        keypoint_params=A.KeypointParams(format="xy", remove_invisible=False),
+    )
+
+
 class HeatmapDataset(Dataset):
     """
     Loads .npy image and .json landmarks (IJK). Generates normalized image and heatmaps.
@@ -64,7 +76,8 @@ class HeatmapDataset(Dataset):
         resize: Tuple[int, int] = (512, 512),
         sigma: float = 3.0,
         percentile_clip: Tuple[float, float] = (1.0, 99.0),
-        landmark_keys: List[str] = None,
+        landmark_keys: Optional[List[str]] = None,
+        augment: bool = False,
     ):
         self.data_dir = data_dir
         self.resize = resize
@@ -72,6 +85,7 @@ class HeatmapDataset(Dataset):
         self.percentile_clip = percentile_clip
         self.landmark_keys = landmark_keys if landmark_keys is not None else LANDMARK_ORDER
         self.samples = self._discover_samples()
+        self._transform = _build_augmentation() if augment else None
 
     def _discover_samples(self):
         out = []
@@ -112,9 +126,19 @@ class HeatmapDataset(Dataset):
         img_t, scale, pad_x, pad_y = _resize_with_padding(img_t, self.resize)  # (1,Ht,Wt)
 
         # Rescale coords to resized+pad space
-        coords_resized = []
-        for (x, y) in coords:
-            coords_resized.append((x * scale + pad_x, y * scale + pad_y))
+        coords_resized = [(x * scale + pad_x, y * scale + pad_y) for (x, y) in coords]
+
+        if self._transform is not None:
+            img_np_512 = img_t.squeeze(0).numpy()  # (H,W) float32
+            result = self._transform(image=img_np_512, keypoints=coords_resized)
+            # .copy() to own the memory; albumentations may return a view of internal buffers
+            # which torch.from_numpy() would make non-resizable, crashing multi-worker DataLoader
+            img_t = torch.from_numpy(result["image"].copy()).unsqueeze(0)
+            th, tw = self.resize
+            coords_resized = [
+                (max(0.0, min(float(kp[0]), tw - 1.0)), max(0.0, min(float(kp[1]), th - 1.0)))
+                for kp in result["keypoints"]
+            ]
 
         hr, wr = self.resize
         heatmap = _make_heatmaps(coords_resized, (hr, wr), sigma=self.sigma)

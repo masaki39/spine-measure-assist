@@ -10,7 +10,7 @@ from pathlib import Path
 import torch
 
 from dataset import LANDMARK_ORDER
-from model import SmallUNet
+from model import get_model
 
 
 def parse_args():
@@ -38,7 +38,8 @@ def main():
     else:
         landmark_keys = list(raw_landmarks)
 
-    model = SmallUNet(num_landmarks=len(landmark_keys))
+    backbone = cfg.get("backbone", "smallunet")
+    model = get_model(backbone, num_landmarks=len(landmark_keys), pretrained=False)
     model.load_state_dict(ckpt["model_state"])
     model.eval()
 
@@ -52,7 +53,7 @@ def main():
         out_path,
         input_names=["image"],
         output_names=["heatmaps"],
-        opset_version=17,
+        opset_version=13,  # 17 fails for smp models (Resize op has no adapter)
         dynamic_axes={"image": {0: "batch"}, "heatmaps": {0: "batch"}},
     )
 

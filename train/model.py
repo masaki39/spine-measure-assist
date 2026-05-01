@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from typing import Optional
 
 
 class ConvBlock(nn.Module):
@@ -69,3 +70,20 @@ class SmallUNet(nn.Module):
         u3 = self.up3(u2, c2)
         u4 = self.up4(u3, c1)
         return self.head(u4)
+
+
+def get_model(backbone: str, num_landmarks: int, pretrained: bool = True) -> nn.Module:
+    """Factory: 'smallunet' or any segmentation_models_pytorch encoder name (e.g. 'resnet34')."""
+    if backbone == "smallunet":
+        return SmallUNet(num_landmarks=num_landmarks)
+    try:
+        import segmentation_models_pytorch as smp
+    except ImportError:
+        raise ImportError("segmentation-models-pytorch が必要です: uv add segmentation-models-pytorch")
+    return smp.Unet(
+        encoder_name=backbone,
+        encoder_weights="imagenet" if pretrained else None,
+        in_channels=1,
+        classes=num_landmarks,
+        activation=None,
+    )

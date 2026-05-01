@@ -8,11 +8,11 @@ import os
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 from dataset import HeatmapDataset, LANDMARK_ORDER
-from model import SmallUNet
+from model import SmallUNet, get_model
 
 
 def parse_args():
@@ -28,25 +28,48 @@ def parse_args():
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu", help="cpu or cuda")
     p.add_argument("--checkpoint", default=None, help="Path to .pt checkpoint to resume/finetune from")
     p.add_argument("--landmarks", default=None, help="Comma-separated landmark names (default: L1_ant,L1_post,S1_ant,S1_post,FH)")
+    p.add_argument("--backbone", default="smallunet", help="Model backbone: 'smallunet' or segmentation_models_pytorch encoder (e.g. 'resnet34', 'efficientnet-b3')")
+    p.add_argument("--augment", action="store_true", help="Enable data augmentation (rotation, elastic transform, brightness/contrast)")
+    p.add_argument("--loss", default="mse", choices=["mse", "awl"], help="Loss function: mse (default) or awl (Adaptive Wing Loss)")
     return p.parse_args()
 
 
-def train_one_epoch(model, loader, optimizer, device):
+def adaptive_wing_loss(pred: torch.Tensor, target: torch.Tensor,
+                        omega=14.0, theta=0.5, epsilon=1.0, alpha=2.1) -> torch.Tensor:
+    """Adaptive Wing Loss for heatmap-based landmark detection (Wang et al., ICCV 2019)."""
+    delta = (target - pred).abs()
+    # clamp alpha-target away from 0 for numerical safety
+    amt = (alpha - target).clamp(min=0.1)
+    A = omega * amt / epsilon * torch.pow(theta / epsilon, amt - 1) / (
+        1 + torch.pow(theta / epsilon, amt)
+    )
+    C = theta * A - omega * torch.log(1 + torch.pow(theta / epsilon, amt))
+    # clamp delta to avoid 0^p gradient issues in log branch
+    loss = torch.where(
+        delta < theta,
+        omega * torch.log(1 + torch.pow(delta.clamp(min=1e-12) / epsilon, amt)),
+        A * delta - C,
+    )
+    return loss.mean()
+
+
+def train_one_epoch(model, loader, optimizer, device, loss_fn):
     model.train()
     total_loss = 0.0
     for batch in tqdm(loader, desc="train", leave=False):
         img = batch["image"].to(device)
         target = batch["heatmap"].to(device)
         pred = model(img)
-        loss = torch.mean((pred - target) ** 2)
+        loss = loss_fn(pred, target)
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         total_loss += loss.item() * img.size(0)
     return total_loss / len(loader.dataset)
 
 
-def validate(model, loader, device):
+def validate(model, loader, device, loss_fn):
     model.eval()
     total_loss = 0.0
     with torch.no_grad():
@@ -54,17 +77,17 @@ def validate(model, loader, device):
             img = batch["image"].to(device)
             target = batch["heatmap"].to(device)
             pred = model(img)
-            loss = torch.mean((pred - target) ** 2)
+            loss = loss_fn(pred, target)
             total_loss += loss.item() * img.size(0)
     return total_loss / len(loader.dataset)
 
 
-def _build_model_with_landmark_transfer(ckpt, old_landmarks, new_landmarks, device):
-    """
-    Build SmallUNet with new_landmarks, transferring backbone + matched head channels from checkpoint.
-    New landmark channels are randomly initialized.
-    """
-    new_model = SmallUNet(num_landmarks=len(new_landmarks)).to(device)
+def _build_model_with_landmark_transfer(ckpt, old_landmarks, new_landmarks, old_backbone, new_backbone, device):
+    """Transfer backbone weights + matched head channels when landmark set changes (SmallUNet only)."""
+    new_model = get_model(new_backbone, num_landmarks=len(new_landmarks)).to(device)
+    if old_backbone != "smallunet" or new_backbone != "smallunet":
+        return new_model
+
     old_state = ckpt["model_state"]
     new_state = new_model.state_dict()
 
@@ -90,42 +113,67 @@ def main():
 
     landmark_keys = [k.strip() for k in args.landmarks.split(",")] if args.landmarks else LANDMARK_ORDER
 
-    dataset = HeatmapDataset(
+    # Create train/val datasets separately so augmentation applies only to training
+    train_dataset = HeatmapDataset(
         data_dir=args.data_dir,
         resize=tuple(args.resize),
         sigma=args.sigma,
         landmark_keys=landmark_keys,
+        augment=args.augment,
     )
-    # 90/10 split; 1サンプルのみの場合は訓練・検証共用
-    n_total = len(dataset)
+    val_dataset = HeatmapDataset(
+        data_dir=args.data_dir,
+        resize=tuple(args.resize),
+        sigma=args.sigma,
+        landmark_keys=landmark_keys,
+        augment=False,
+    )
+
+    n_total = len(train_dataset)
     if n_total == 1:
         print("WARNING: サンプルが1件のみ。訓練データを検証にも使用します。")
-        train_set = dataset
-        val_set = dataset
+        train_set = train_dataset
+        val_set = val_dataset
     else:
         n_val = max(1, n_total // 10)
         n_train = n_total - n_val
-        train_set, val_set = torch.utils.data.random_split(dataset, [n_train, n_val])
+        indices = torch.randperm(n_total).tolist()
+        train_set = Subset(train_dataset, indices[:n_train])
+        val_set = Subset(val_dataset, indices[n_train:])
 
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
     val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
-    model = SmallUNet(num_landmarks=len(landmark_keys)).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    loss_fn = adaptive_wing_loss if args.loss == "awl" else lambda p, t: torch.mean((p - t) ** 2)
+
+    model = get_model(args.backbone, num_landmarks=len(landmark_keys)).to(device)
+
+    # Pretrained encoder uses 1/10 LR to preserve ImageNet features; random decoder uses full LR
+    if args.backbone != "smallunet" and hasattr(model, "encoder"):
+        optimizer = torch.optim.AdamW([
+            {"params": model.encoder.parameters(), "lr": args.lr * 0.1},
+            {"params": [p for n, p in model.named_parameters() if not n.startswith("encoder.")], "lr": args.lr},
+        ])
+    else:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
     if args.checkpoint:
         ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
         old_landmarks = ckpt.get("config", {}).get("landmarks") or LANDMARK_ORDER
         if isinstance(old_landmarks, str):
             old_landmarks = [k.strip() for k in old_landmarks.split(",")]
+        old_backbone = ckpt.get("config", {}).get("backbone", "smallunet")
 
-        if old_landmarks == landmark_keys:
+        if old_landmarks == landmark_keys and old_backbone == args.backbone:
             model.load_state_dict(ckpt["model_state"])
             optimizer.load_state_dict(ckpt["optimizer_state"])
         else:
-            print(f"ランドマーク構成が変わりました: {old_landmarks} → {landmark_keys}")
-            print("エンコーダ/デコーダを移植し、一致するヘッドチャネルをコピーします。")
-            model = _build_model_with_landmark_transfer(ckpt, old_landmarks, landmark_keys, device)
+            print(f"ランドマーク構成またはバックボーンが変わりました。")
+            print(f"  backbone: {old_backbone} → {args.backbone}")
+            print(f"  landmarks: {old_landmarks} → {landmark_keys}")
+            model = _build_model_with_landmark_transfer(
+                ckpt, old_landmarks, landmark_keys, old_backbone, args.backbone, device
+            )
             optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
         for pg in optimizer.param_groups:
@@ -134,8 +182,8 @@ def main():
 
     best_val = float("inf")
     for epoch in range(1, args.epochs + 1):
-        train_loss = train_one_epoch(model, train_loader, optimizer, device)
-        val_loss = validate(model, val_loader, device)
+        train_loss = train_one_epoch(model, train_loader, optimizer, device, loss_fn)
+        val_loss = validate(model, val_loader, device, loss_fn)
         print(f"[{epoch}/{args.epochs}] train {train_loss:.4f} | val {val_loss:.4f}")
         ckpt = {
             "epoch": epoch,
