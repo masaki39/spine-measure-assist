@@ -273,6 +273,7 @@ class AssistController:
             vnode.SetDisplayVisibility(0)
 
         if node is not None:
+            self._ensureVectorNodesExist()
             tag = node.AddObserver(slicer.vtkMRMLMarkupsNode.PointAddedEvent, self._onPointAdded)
             self._markupObserverTags.append(tag)
             for event in [
@@ -518,23 +519,9 @@ class AssistController:
                     self._vector_line_nodes[name].SetDisplayVisibility(0)
                 continue
 
-            if name not in self._vector_line_nodes:
-                node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsLineNode", f"Vec_{name}")
-                node.SetLocked(True)
-                # Hide from editor widgets so Slicer does not auto-select this node
-                # as the active markup target (which would intercept placement clicks).
-                node.SetHideFromEditors(True)
-                node.CreateDefaultDisplayNodes()
-                node.SetDisplayVisibility(0)  # hide until both endpoints are set below
-                dn = node.GetDisplayNode()
-                if dn:
-                    r, g, b = self._active_set.vector_colors[name]
-                    dn.SetSelectedColor(r, g, b)
-                    dn.SetColor(r, g, b)
-                    dn.SetTextScale(0)
-                self._vector_line_nodes[name] = node
-
-            node = self._vector_line_nodes[name]
+            node = self._vector_line_nodes.get(name)
+            if node is None:
+                continue
             ep1 = pts[p1_key]
             ep2 = pts[p2_key]
             if self._active_set.vector_modes[name] == "Line":
@@ -617,6 +604,29 @@ class AssistController:
             self._for_each_slice(_apply)
 
     # --- Private helpers ---
+    def _ensureVectorNodesExist(self):
+        """Pre-create all Vec_* line nodes before placement mode starts.
+
+        Lazy creation inside _updateVectorOverlays causes Slicer to switch the
+        active placement target to the newly added MarkupsLineNode mid-click,
+        resulting in stray line segments instead of fiducial points.
+        """
+        for name in self._active_set.vector_definitions:
+            if name in self._vector_line_nodes:
+                continue
+            node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsLineNode", f"Vec_{name}")
+            node.SetLocked(True)
+            node.SetHideFromEditors(True)
+            node.CreateDefaultDisplayNodes()
+            node.SetDisplayVisibility(0)
+            dn = node.GetDisplayNode()
+            if dn:
+                r, g, b = self._active_set.vector_colors[name]
+                dn.SetSelectedColor(r, g, b)
+                dn.SetColor(r, g, b)
+                dn.SetTextScale(0)
+            self._vector_line_nodes[name] = node
+
     def _ensureMarkupNodeExists(self):
         current = self.measure_ui.markupSelector.currentNode()
         if current and current.IsA("vtkMRMLMarkupsFiducialNode"):
