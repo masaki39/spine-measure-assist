@@ -13,9 +13,6 @@ dev = [
 ]
 
 # Training dependencies (CPU想定。GPU版が必要なら環境に合わせて調整してください)
-[tool.uv]
-dev-dependencies = []
-
 [project.optional-dependencies]
 ml = [
     "torch>=2.4.0",

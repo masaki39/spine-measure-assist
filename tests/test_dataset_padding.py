@@ -15,11 +15,12 @@ def _write_sample(tmp_path):
         for name, (x, y) in zip(
             LANDMARK_ORDER,
             [
-                (0, 0),       # maps to padding only
-                (49, 99),     # bottom-right corner within bounds
-                (10, 20),
-                (25, 50),
-                (5, 75),
+                (0, 0),       # L1_ant — maps to padding only
+                (49, 99),     # L1_post — bottom-right corner within bounds
+                (10, 20),     # S1_ant
+                (25, 50),     # S1_post
+                (5, 75),      # FH
+                (24, 50),     # L1_center
             ],
         )
     }
