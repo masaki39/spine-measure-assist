@@ -18,7 +18,7 @@ from model import SmallUNet, get_model
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--data-dir", required=True, help="Folder with *_image.npy and *_landmarks.json (exported from Slicer)")
-    p.add_argument("--save-dir", default="runs", help="Where to save checkpoints (best.pt / last.pt)")
+    p.add_argument("--save-dir", default="train/runs", help="Where to save checkpoints (best.pt / last.pt)")
     p.add_argument("--epochs", type=int, default=20, help="How many passes over the dataset (more can improve accuracy but takes time)")
     p.add_argument("--batch-size", type=int, default=4, help="How many samples processed together in one step (fits GPU/CPU memory)")
     p.add_argument("--lr", type=float, default=1e-3, help="Learning rate (step size for optimization)")

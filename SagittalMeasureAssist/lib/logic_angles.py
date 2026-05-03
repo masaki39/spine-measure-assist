@@ -93,6 +93,19 @@ def lumbosacral_lordosis_deg(v_L1, v_S1):
     return wrap_signed_angle(ll)
 
 
+def l1_pelvic_angle_deg(FH, S1_mid, L1_center):
+    """
+    Signed angle from FH→S1_mid to FH→L1_center.
+    Positive when L1_center is anterior (x > 0 side) relative to the pelvis axis.
+    Uses cross/dot product: positive cross = counterclockwise = anterior in image coords.
+    """
+    v1 = vector_from_points(FH, S1_mid)
+    v2 = vector_from_points(FH, L1_center)
+    cross = v1[0] * v2[1] - v1[1] * v2[0]
+    dot = v1[0] * v2[0] + v1[1] * v2[1]
+    return math.degrees(math.atan2(cross, dot))
+
+
 REQUIRED_KEYS = ["L1_ant", "L1_post", "S1_ant", "S1_post", "FH"]
 
 
@@ -125,4 +138,7 @@ def compute_angles_from_points(points):
     LL = lumbosacral_lordosis_deg(v_L1, v_S1)
     PI_modified = pelvic_incidence_deg(v_pelvis, v_S1)
 
-    return {"PI": PI_modified, "PT": PT, "SS": SS, "LL": LL}
+    result = {"PI": PI_modified, "PT": PT, "SS": SS, "LL": LL}
+    if "L1_center" in points:
+        result["L1PA"] = l1_pelvic_angle_deg(FH, S1_mid, points["L1_center"])
+    return result

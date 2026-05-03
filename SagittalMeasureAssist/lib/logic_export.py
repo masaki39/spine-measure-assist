@@ -1,8 +1,9 @@
 """
-Export helpers for sagittal landmark training data.
+Export helpers for sagittal landmark training data and angle CSV output.
 Keeps I/O and coordinate transforms out of the main widget.
 """
 
+import csv
 import json
 import os
 
@@ -13,7 +14,7 @@ import vtk
 from logic_angles import compute_angles_from_points
 from measurement_sets import PELVIC_SET, MeasurementSetDef
 
-REQUIRED_LABELS_ORDERED = ["L1_ant", "L1_post", "S1_ant", "S1_post", "FH"]
+REQUIRED_LABELS_ORDERED = ["L1_ant", "L1_post", "S1_ant", "S1_post", "FH", "L1_center"]
 
 
 class ExportLogic:
@@ -114,3 +115,43 @@ class ExportLogic:
             )
 
         return {"npy": npy_path, "json": json_path, "nrrd": nrrd_path}
+
+    def export_angles_csv(self, markupNode, outputDir, caseId):
+        """Append the current case's angles as a row to angles.csv in outputDir.
+
+        Collects only the landmarks that are present (lenient — no validation error
+        if some points are missing).  Returns the path to the CSV file.
+        """
+        os.makedirs(outputDir, exist_ok=True)
+        points = self._collect_available_landmarks_ras_2d(markupNode)
+        angles = self._set.compute_fn(points)
+
+        csv_path = os.path.join(outputDir, "angles.csv")
+        file_exists = os.path.exists(csv_path)
+
+        fieldnames = ["case_id"] + self._set.angle_names
+        row = {"case_id": caseId}
+        for name in self._set.angle_names:
+            val = angles.get(name)
+            row[name] = f"{val:.2f}" if isinstance(val, float) else ""
+
+        with open(csv_path, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(row)
+
+        return csv_path
+
+    def _collect_available_landmarks_ras_2d(self, markupNode):
+        """Collect only landmarks that are present (lenient, no missing-label error)."""
+        labels_set = set(self._set.point_labels)
+        points = {}
+        coordsRAS = [0.0, 0.0, 0.0]
+        for i in range(markupNode.GetNumberOfControlPoints()):
+            label = markupNode.GetNthControlPointLabel(i)
+            if label in labels_set:
+                markupNode.GetNthControlPointPosition(i, coordsRAS)
+                x = -coordsRAS[0] if self.flip_x_axis else coordsRAS[0]
+                points[label] = (x, coordsRAS[1])
+        return points

@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 
-LANDMARK_ORDER = ["L1_ant", "L1_post", "S1_ant", "S1_post", "FH"]
+LANDMARK_ORDER = ["L1_ant", "L1_post", "S1_ant", "S1_post", "FH", "L1_center"]
 
 
 def _percentile_clip_norm(img: np.ndarray, p_low=1.0, p_high=99.0) -> np.ndarray:

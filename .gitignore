@@ -32,6 +32,7 @@ env/
 *.png
 
 # Data directory (DICOM, exported training data)
+train/*/
 data/
 dataset/
 runs/

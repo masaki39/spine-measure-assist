@@ -60,17 +60,10 @@ class MeasureUI:
         self.markupSelector.showChildNodeTypes = False
         self.markupSelector.setMRMLScene(slicer.mrmlScene)
         self.markupSelector.setToolTip(
-            "Select a Markups Fiducial node to store the 5 landmark points.\n"
-            "A Markups Fiducial is a named list of 3D points persisted in the Slicer scene.\n"
-            "Use 'New / Add point' to create one automatically."
+            "Select a Markups Fiducial node to store the landmark points.\n"
+            "Use the 'Place' buttons below to create one automatically."
         )
         form.addRow("Markups:", self.markupSelector)
-
-        self.createMarkupButton = qt.QPushButton("New / Add point")
-        self.createMarkupButton.toolTip = (
-            "Create a Markups Fiducial if needed, then enter single-point placement mode."
-        )
-        form.addRow("", self.createMarkupButton)
 
         self.clearMarkupButton = qt.QPushButton("Clear points")
         self.clearMarkupButton.toolTip = "Remove all control points from the selected Markups node."
@@ -83,18 +76,24 @@ class MeasureUI:
         )
         form.addRow(self.flipXAxisCheckBox)
 
-        self.instructionsLabel = qt.QLabel("")
-        self.instructionsLabel.wordWrap = True
+        # Per-landmark placement grid
+        self._landmark_wrapper = qt.QWidget()
+        _wl = qt.QVBoxLayout(self._landmark_wrapper)
+        _wl.setContentsMargins(0, 0, 0, 0)
+        _wl.setSpacing(0)
+        self._landmark_inner = None
+        self.landmark_rows = {}  # label -> (place_button, status_label)
+        form.addRow("Landmarks:", self._landmark_wrapper)
         if initial_set:
-            self._build_instructions(initial_set)
-        form.addRow(self.instructionsLabel)
+            self._rebuild_landmark_grid(initial_set)
 
-        self.showVectorsCheck = qt.QCheckBox("Show vectors (L1, S1, pelvis)")
+        self.showVectorsCheck = qt.QCheckBox("Show vectors (L1, S1, pelvis, L1_pelvis)")
         self.showVectorsCheck.toolTip = (
             "Overlay auxiliary lines for each measurement vector:\n"
-            "  L1:     L1_ant → L1_post  (full line)\n"
-            "  S1:     S1_ant → S1_post  (full line)\n"
-            "  Pelvis: FH → midpoint of S1  (segment)"
+            "  L1:       L1_ant → L1_post  (full line)\n"
+            "  S1:       S1_ant → S1_post  (full line)\n"
+            "  pelvis:   FH → midpoint of S1  (segment)\n"
+            "  L1_pelvis: FH → L1_center  (segment)"
         )
         form.addRow(self.showVectorsCheck)
 
@@ -111,9 +110,40 @@ class MeasureUI:
         self.statusLabel.wordWrap = True
         form.addRow(self.statusLabel)
 
-    def _build_instructions(self, mset):
-        lines = "\n".join(f"{i+1}) {desc}" for i, desc in enumerate(mset.point_instructions))
-        self.instructionsLabel.setText(f"Place {len(mset.point_labels)} landmarks in order:\n" + lines)
+    def _rebuild_landmark_grid(self, mset):
+        """Rebuild the per-landmark Place button grid for the given measurement set."""
+        if self._landmark_inner is not None:
+            self._landmark_wrapper.layout().removeWidget(self._landmark_inner)
+            self._landmark_inner.setParent(None)
+            self._landmark_inner = None
+
+        inner = qt.QWidget()
+        grid = qt.QGridLayout(inner)
+        grid.setContentsMargins(0, 2, 0, 2)
+        grid.setSpacing(3)
+        grid.setColumnStretch(1, 1)
+
+        self.landmark_rows = {}
+        for i, (label, instruction) in enumerate(zip(mset.point_labels, mset.point_instructions)):
+            btn = qt.QPushButton("Place")
+            btn.setFixedWidth(58)
+            btn.setToolTip(f"Enter placement mode for: {label}")
+
+            desc = qt.QLabel(instruction)
+            desc.wordWrap = True
+
+            status = qt.QLabel("○")
+            status.setFixedWidth(20)
+            status.setAlignment(qt.Qt.AlignCenter)
+            status.setStyleSheet("color: gray;")
+
+            grid.addWidget(btn, i, 0)
+            grid.addWidget(desc, i, 1)
+            grid.addWidget(status, i, 2)
+            self.landmark_rows[label] = (btn, status)
+
+        self._landmark_wrapper.layout().addWidget(inner)
+        self._landmark_inner = inner
 
     def _build_results_table(self, mset):
         self.resultsTable.setRowCount(len(mset.angle_names))
@@ -126,5 +156,5 @@ class MeasureUI:
             self.resultsTable.setItem(i, 1, valueItem)
 
     def update_for_set(self, mset):
-        self._build_instructions(mset)
+        self._rebuild_landmark_grid(mset)
         self._build_results_table(mset)

@@ -107,6 +107,48 @@ def test_wrap_signed_angle(angle, expected):
     assert math.isclose(angles.wrap_signed_angle(angle), expected, abs_tol=1e-6)
 
 
+def test_l1_pelvic_angle_deg_anterior_positive():
+    # L1_center is to the anterior (x+) side of pelvis axis → positive
+    FH = (0, 10)
+    S1_mid = (0, 0)
+    L1_center_ant = (1, 5)
+    assert angles.l1_pelvic_angle_deg(FH, S1_mid, L1_center_ant) > 0
+
+
+def test_l1_pelvic_angle_deg_posterior_negative():
+    # L1_center is to the posterior (x-) side → negative
+    FH = (0, 10)
+    S1_mid = (0, 0)
+    L1_center_post = (-1, 5)
+    assert angles.l1_pelvic_angle_deg(FH, S1_mid, L1_center_post) < 0
+
+
+def test_compute_angles_includes_l1pa_when_l1_center_present():
+    pts = {
+        "FH": (0, 10), "S1_ant": (-0.5, 0), "S1_post": (0.5, 0),
+        "L1_ant": (-0.5, 5), "L1_post": (0.5, 5), "L1_center": (1.0, 5),
+    }
+    result = angles.compute_angles_from_points(pts)
+    assert "L1PA" in result
+    assert result["L1PA"] > 0
+
+
+def test_compute_angles_l1pa_negative_when_posterior():
+    pts = {
+        "FH": (0, 10), "S1_ant": (-0.5, 0), "S1_post": (0.5, 0),
+        "L1_ant": (-0.5, 5), "L1_post": (0.5, 5), "L1_center": (-1.0, 5),
+    }
+    result = angles.compute_angles_from_points(pts)
+    assert result["L1PA"] < 0
+
+
+def test_compute_angles_no_l1pa_without_l1_center():
+    pts = {"FH": (0, 2), "S1_ant": (0, 0), "S1_post": (1, 1),
+           "L1_ant": (0, 1), "L1_post": (1, 2)}
+    result = angles.compute_angles_from_points(pts)
+    assert "L1PA" not in result
+
+
 def test_lumbosacral_lordosis_deg_same_slope():
     assert math.isclose(angles.lumbosacral_lordosis_deg((1, 0), (1, 0)), 0.0, abs_tol=1e-6)
 

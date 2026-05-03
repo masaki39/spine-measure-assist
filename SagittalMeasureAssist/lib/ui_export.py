@@ -46,9 +46,19 @@ class ExportUI:
         form.addRow("Auto-numbering:", autoLayout)
         form.addRow("", self.overwriteCheck)
 
-        self.exportButton = qt.QPushButton("Export")
+        self.exportButton = qt.QPushButton("Export training data")
         self.exportButton.toolTip = "Export .npy / .nrrd and landmark JSON with computed angles."
-        form.addRow(self.exportButton)
+
+        self.csvButton = qt.QPushButton("Append to CSV")
+        self.csvButton.toolTip = (
+            "Append the current case's angles to angles.csv in the output directory.\n"
+            "Creates the file if it does not exist; adds a header row on first write."
+        )
+
+        btnLayout = qt.QHBoxLayout()
+        btnLayout.addWidget(self.exportButton)
+        btnLayout.addWidget(self.csvButton)
+        form.addRow(btnLayout)
 
         self.exportStatusLabel = qt.QLabel("")
         self.exportStatusLabel.wordWrap = True

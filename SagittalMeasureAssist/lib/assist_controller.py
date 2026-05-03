@@ -7,6 +7,7 @@ import qt
 import slicer
 import vtk
 
+from logic_angles import REQUIRED_KEYS
 from logic_export import ExportLogic
 from logic_inference import OnnxInferenceLogic
 from measurement_sets import PELVIC_SET, get_set, set_names
@@ -42,7 +43,8 @@ class AssistController:
         self._markupObserverTags = []
         self._heatmap_channels = None  # (L, H, W)
         self._heatmap_volume_node = None
-        self._vector_line_nodes = {}  # key: "L1" / "S1" / "pelvis"
+        self._vector_line_nodes = {}  # key: "L1" / "S1" / "pelvis" / "L1_pelvis"
+        self._pending_label = None   # label being placed via individual Place button
         self._shortcuts = []
         self._connect_signals()
         self._setup_shortcuts()
@@ -69,13 +71,13 @@ class AssistController:
         self.measure_ui.volumeSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onVolumeChanged)
         self.measure_ui.prevVolumeButton.connect("clicked()", self.onVolumePrev)
         self.measure_ui.nextVolumeButton.connect("clicked()", self.onVolumeNext)
-        self.measure_ui.createMarkupButton.connect("clicked()", self.onCreateMarkup)
         self.measure_ui.clearMarkupButton.connect("clicked()", self.onClearMarkups)
         self.measure_ui.markupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onMarkupNodeChanged)
         self.measure_ui.flipXAxisCheckBox.connect("toggled(bool)", lambda *_: self.onUpdateMeasurements())
         self.measure_ui.showVectorsCheck.connect("toggled(bool)", self._onShowVectorsToggled)
 
         self.export_ui.exportButton.connect("clicked()", self.onExport)
+        self.export_ui.csvButton.connect("clicked()", self.onExportCsv)
         self.export_ui.browseButton.connect("clicked()", self.onBrowse)
         self.export_ui.prefixEdit.textChanged.connect(lambda *_: self._update_counter_preview())
         self.auto_ui.modelBrowseButton.connect("clicked()", self.onBrowseModel)
@@ -83,6 +85,14 @@ class AssistController:
         self.auto_ui.heatmapCheckBox.connect("toggled(bool)", self.onHeatmapToggled)
         self.auto_ui.landmarkCombo.connect("currentIndexChanged(int)", self.onHeatmapLandmarkChanged)
         self.auto_ui.opacitySlider.connect("valueChanged(int)", self.onHeatmapOpacityChanged)
+
+        self._connect_landmark_buttons()
+
+    def _connect_landmark_buttons(self):
+        """Connect each per-landmark Place button to onPlaceLandmark."""
+        for label, (btn, _) in self.measure_ui.landmark_rows.items():
+            # Use default-argument capture to bind current label value
+            btn.connect("clicked()", lambda lbl=label: self.onPlaceLandmark(lbl))
 
     # --- Volume navigation ---
     def _volume_nodes(self):
@@ -113,6 +123,7 @@ class AssistController:
             vnode.SetDisplayVisibility(0)
         self._vector_line_nodes = {}
         self.measure_ui.update_for_set(self._active_set)
+        self._connect_landmark_buttons()
         self.auto_ui.update_landmark_combo(self._active_set.point_labels)
         markupNode = self.measure_ui.markupSelector.currentNode()
         if markupNode is not None:
@@ -137,11 +148,52 @@ class AssistController:
         except Exception:
             return None
 
-    def onCreateMarkup(self):
+    def onPlaceLandmark(self, label):
+        """Enter placement mode for a specific landmark label."""
+        self._pending_label = label
         fiducialNode = self._ensureMarkupNodeExists()
         self.measure_ui.markupSelector.setCurrentNode(fiducialNode)
+
+        # Explicitly activate the fiducial node for placement.
+        # Without this, Slicer may target the most recently added markup node
+        # (e.g. a Vec_* MarkupsLineNode) instead.
+        selectionNode = slicer.app.applicationLogic().GetSelectionNode()
+        selectionNode.SetReferenceActivePlaceNodeClassName("vtkMRMLMarkupsFiducialNode")
+        selectionNode.SetActivePlaceNodeID(fiducialNode.GetID())
+
         slicer.modules.markups.logic().StartPlaceMode(0)
-        self.measure_ui.statusLabel.setText("Placement mode: click to place one point. Press the button again to add the next point.")
+        self.measure_ui.statusLabel.setText(f"Placement mode: click to place  {label}")
+        self._highlight_pending_button(label)
+
+    def _highlight_pending_button(self, active_label):
+        """Highlight the active Place button orange; reset others."""
+        for label, (btn, _) in self.measure_ui.landmark_rows.items():
+            if label == active_label:
+                btn.setText("Placing…")
+                btn.setStyleSheet("background-color: #d06000; color: white;")
+            else:
+                btn.setText("Place")
+                btn.setStyleSheet("")
+
+    def _reset_pending_button(self):
+        """Reset all Place button labels and styles."""
+        for btn, _ in self.measure_ui.landmark_rows.values():
+            btn.setText("Place")
+            btn.setStyleSheet("")
+
+    def _update_landmark_status_buttons(self, markupNode):
+        """Update ✓/○ status indicators based on which points are placed."""
+        placed = set()
+        if markupNode is not None:
+            for i in range(markupNode.GetNumberOfControlPoints()):
+                placed.add(markupNode.GetNthControlPointLabel(i))
+        for label, (_, status) in self.measure_ui.landmark_rows.items():
+            if label in placed:
+                status.setText("✓")
+                status.setStyleSheet("color: #00aa00; font-weight: bold;")
+            else:
+                status.setText("○")
+                status.setStyleSheet("color: gray;")
 
     def onClearMarkups(self):
         markupNode = self.measure_ui.markupSelector.currentNode()
@@ -181,22 +233,41 @@ class AssistController:
         n = markupNode.GetNumberOfControlPoints()
         if n == 0:
             return
-        used = {markupNode.GetNthControlPointLabel(i) for i in range(n - 1)}
-        for label in self._active_set.point_labels:
-            if label not in used:
-                markupNode.SetNthControlPointLabel(n - 1, label)
-                break
+
+        if self._pending_label is not None:
+            label = self._pending_label
+            self._pending_label = None
+            self._reset_pending_button()
+            # Remove existing point with this label if any (replace workflow)
+            for i in range(n - 1):
+                if markupNode.GetNthControlPointLabel(i) == label:
+                    markupNode.RemoveNthControlPoint(i)
+                    break
+            # Label the newly added (now last) point
+            markupNode.SetNthControlPointLabel(
+                markupNode.GetNumberOfControlPoints() - 1, label
+            )
+        else:
+            # Sequential: assign the first unused label
+            used = {markupNode.GetNthControlPointLabel(i) for i in range(n - 1)}
+            for label in self._active_set.point_labels:
+                if label not in used:
+                    markupNode.SetNthControlPointLabel(n - 1, label)
+                    break
+
         self.onUpdateMeasurements()
 
     def onUpdateMeasurements(self):
         markupNode = self.measure_ui.markupSelector.currentNode()
+        self._update_landmark_status_buttons(markupNode)
+
         if markupNode is None:
             return
 
         label_to_pos = {}    # 2D (x, y) for angle computation, with optional x-flip
         label_to_ras3d = {}  # 3D RAS for vector visualization
         coordsRAS = [0.0, 0.0, 0.0]
-        active_labels = self._active_set.point_labels
+        active_labels = set(self._active_set.point_labels)
         for i in range(markupNode.GetNumberOfControlPoints()):
             label = markupNode.GetNthControlPointLabel(i)
             if label in active_labels:
@@ -205,22 +276,28 @@ class AssistController:
                 label_to_pos[label] = (x, coordsRAS[1])
                 label_to_ras3d[label] = (coordsRAS[0], coordsRAS[1], coordsRAS[2])
 
-        if len(label_to_pos) < len(active_labels):
-            self.measure_ui.statusLabel.setText(f"Landmarks: {len(label_to_pos)} / {len(active_labels)}")
+        n_placed = len(label_to_pos)
+        n_total = len(self._active_set.point_labels)
+
+        # Require the 5 base points before computing angles
+        missing_required = [k for k in REQUIRED_KEYS if k not in label_to_pos]
+        if missing_required:
+            self.measure_ui.statusLabel.setText(f"Landmarks: {n_placed} / {n_total}")
             for vnode in self._vector_line_nodes.values():
                 vnode.SetDisplayVisibility(0)
             return
 
-        points = {label: label_to_pos[label] for label in active_labels}
-
         try:
-            angles = self.logic.compute_angles_from_points(points)
+            angles = self.logic.compute_angles_from_points(label_to_pos)
         except ValueError as exc:
             self.measure_ui.statusLabel.setText(f"Error: {exc}")
             return
 
         self._updateResultsTable(angles)
-        self.measure_ui.statusLabel.setText("Measurements updated.")
+        status_text = "Measurements updated."
+        if n_placed < n_total:
+            status_text += f"  ({n_placed} / {n_total} points placed)"
+        self.measure_ui.statusLabel.setText(status_text)
         self._updateVectorOverlays(label_to_ras3d)
 
     def onBrowseModel(self):
@@ -315,19 +392,56 @@ class AssistController:
             self.counter += 1
             self._update_counter_preview()
 
+    def onExportCsv(self):
+        markupNode = self.measure_ui.markupSelector.currentNode()
+        outputDir = self.export_ui.outputDirEdit.text.strip()
+        manualCaseId = self.export_ui.caseIdEdit.text.strip()
+
+        if markupNode is None:
+            self.export_ui.exportStatusLabel.setText("Error: no Markups node selected.")
+            return
+        if not outputDir:
+            self.export_ui.exportStatusLabel.setText("Error: no output folder specified.")
+            return
+
+        caseId = manualCaseId if manualCaseId else self._format_counter_preview()
+
+        try:
+            exporter = ExportLogic(flip_x_axis=self.measure_ui.flipXAxisCheckBox.isChecked(), measurement_set=self._active_set)
+            csv_path = exporter.export_angles_csv(markupNode=markupNode, outputDir=outputDir, caseId=caseId)
+        except ValueError as exc:
+            self.export_ui.exportStatusLabel.setText(f"Error: {exc}")
+            return
+        except Exception:
+            logging.exception("CSV export failed")
+            self.export_ui.exportStatusLabel.setText("Error: CSV export failed. See Python Console for details.")
+            return
+
+        self.export_ui.exportStatusLabel.setText(f"CSV appended: {os.path.basename(csv_path)}")
+
     # --- Vector overlay ---
     def _updateVectorOverlays(self, label_to_ras3d):
         pts = dict(label_to_ras3d)
         for key, (a, b) in self._active_set.midpoint_definitions.items():
-            pa, pb = label_to_ras3d[a], label_to_ras3d[b]
-            pts[key] = ((pa[0]+pb[0])/2, (pa[1]+pb[1])/2, (pa[2]+pb[2])/2)
+            if a in label_to_ras3d and b in label_to_ras3d:
+                pa, pb = label_to_ras3d[a], label_to_ras3d[b]
+                pts[key] = ((pa[0]+pb[0])/2, (pa[1]+pb[1])/2, (pa[2]+pb[2])/2)
 
         visible = self.measure_ui.showVectorsCheck.isChecked()
 
         for name, (p1_key, p2_key) in self._active_set.vector_definitions.items():
+            # Skip vectors whose endpoints are not yet available
+            if p1_key not in pts or p2_key not in pts:
+                if name in self._vector_line_nodes:
+                    self._vector_line_nodes[name].SetDisplayVisibility(0)
+                continue
+
             if name not in self._vector_line_nodes:
                 node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsLineNode", f"Vec_{name}")
                 node.SetLocked(True)
+                # Hide from editor widgets so Slicer does not auto-select this node
+                # as the active markup target (which would intercept placement clicks).
+                node.SetHideFromEditors(True)
                 node.CreateDefaultDisplayNodes()
                 dn = node.GetDisplayNode()
                 if dn:
@@ -445,8 +559,11 @@ class AssistController:
 
     def _updateResultsTable(self, anglesDict):
         for i, name in enumerate(self._active_set.angle_names):
-            value = anglesDict.get(name, float("nan"))
-            text = "--" if math.isnan(value) else f"{value:.1f}°"
+            value = anglesDict.get(name)
+            if value is None or (isinstance(value, float) and math.isnan(value)):
+                text = "--"
+            else:
+                text = f"{value:.1f}°"
             self.measure_ui.resultsTable.item(i, 1).setText(text)
 
     def _format_counter_preview(self):
