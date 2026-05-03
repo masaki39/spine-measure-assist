@@ -116,30 +116,45 @@ class ExportLogic:
 
         return {"npy": npy_path, "json": json_path, "nrrd": nrrd_path}
 
-    def export_angles_csv(self, markupNode, outputDir, caseId):
-        """Append the current case's angles as a row to angles.csv in outputDir.
+    def export_angles_csv(self, markupNode, outputDir, caseId, overwrite=False):
+        """Export the current case's angles to angles.csv in outputDir.
 
-        Collects only the landmarks that are present (lenient — no validation error
-        if some points are missing).  Returns the path to the CSV file.
+        When overwrite=True and the file already contains a row for caseId,
+        that row is replaced in-place while other rows are preserved.
+        Otherwise the row is appended. Returns the path to the CSV file.
         """
         os.makedirs(outputDir, exist_ok=True)
         points = self._collect_available_landmarks_ras_2d(markupNode)
         angles = self._set.compute_fn(points)
 
         csv_path = os.path.join(outputDir, "angles.csv")
-        file_exists = os.path.exists(csv_path)
-
         fieldnames = ["case_id"] + self._set.angle_names
+
         row = {"case_id": caseId}
         for name in self._set.angle_names:
             val = angles.get(name)
             row[name] = f"{val:.2f}" if isinstance(val, float) else ""
 
-        with open(csv_path, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            if not file_exists:
+        if overwrite and os.path.exists(csv_path):
+            existing_rows = []
+            with open(csv_path, "r", newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for r in reader:
+                    if r.get("case_id") != caseId:
+                        existing_rows.append(r)
+            with open(csv_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
                 writer.writeheader()
-            writer.writerow(row)
+                for r in existing_rows:
+                    writer.writerow(r)
+                writer.writerow(row)
+        else:
+            file_exists = os.path.exists(csv_path)
+            with open(csv_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                if not file_exists:
+                    writer.writeheader()
+                writer.writerow(row)
 
         return csv_path
 

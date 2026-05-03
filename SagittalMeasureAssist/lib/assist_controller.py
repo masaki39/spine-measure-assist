@@ -56,7 +56,12 @@ class AssistController:
             (",", self.onVolumePrev),
             (".", self.onVolumeNext),
             ("r", self.onRunInference),
-            ("e", self.onExport),
+            ("e", self.onExportCsv),
+            ("Shift+Left",  lambda: self._move_selected_landmark(-1,  0)),
+            ("Shift+Right", lambda: self._move_selected_landmark( 1,  0)),
+            ("Shift+Up",    lambda: self._move_selected_landmark( 0,  1)),
+            ("Shift+Down",  lambda: self._move_selected_landmark( 0, -1)),
+            ("F1", self.onShowHotkeys),
         ]
         mw = slicer.util.mainWindow()
         for key, slot in bindings:
@@ -76,10 +81,12 @@ class AssistController:
         self.measure_ui.flipXAxisCheckBox.connect("toggled(bool)", lambda *_: self.onUpdateMeasurements())
         self.measure_ui.showVectorsCheck.connect("toggled(bool)", self._onShowVectorsToggled)
 
-        self.export_ui.exportButton.connect("clicked()", self.onExport)
         self.export_ui.csvButton.connect("clicked()", self.onExportCsv)
         self.export_ui.browseButton.connect("clicked()", self.onBrowse)
         self.export_ui.prefixEdit.textChanged.connect(lambda *_: self._update_counter_preview())
+        self.export_ui.caseIdSourceCombo.connect(
+            "currentIndexChanged(int)", self._onCaseIdSourceChanged
+        )
         self.auto_ui.modelBrowseButton.connect("clicked()", self.onBrowseModel)
         self.auto_ui.runButton.connect("clicked()", self.onRunInference)
         self.auto_ui.heatmapCheckBox.connect("toggled(bool)", self.onHeatmapToggled)
@@ -134,9 +141,9 @@ class AssistController:
         slicer.util.setSliceViewerLayers(background=volumeNode)
         if volumeNode is None:
             return
-        patient_id = self._get_patient_id(volumeNode)
-        if patient_id:
-            self.export_ui.caseIdEdit.setText(patient_id)
+        self._fill_case_id_from_source(volumeNode)
+        if self.auto_ui.autoRunCheck.isChecked() and self.auto_ui.modelPathEdit.text.strip():
+            self.onRunInference()
 
     def _get_patient_id(self, volumeNode):
         try:
@@ -147,6 +154,35 @@ class AssistController:
             return slicer.dicomDatabase.instanceValue(uid, "0010,0020").strip() or None
         except Exception:
             return None
+
+    def _get_filename(self, volumeNode):
+        try:
+            instance_uids = volumeNode.GetAttribute("DICOM.instanceUIDs")
+            if not instance_uids:
+                return None
+            uid = instance_uids.split()[0]
+            filepath = slicer.dicomDatabase.fileForInstance(uid)
+            if not filepath:
+                return None
+            return os.path.splitext(os.path.basename(filepath))[0]
+        except Exception:
+            return None
+
+    def _fill_case_id_from_source(self, volumeNode):
+        if volumeNode is None:
+            return
+        idx = self.export_ui.caseIdSourceCombo.currentIndex
+        if idx == 1:    # Filename (default)
+            value = self._get_filename(volumeNode)
+        elif idx == 0:  # DICOM Patient ID
+            value = self._get_patient_id(volumeNode)
+        else:           # Auto-numbering (idx == 2)
+            value = None
+        self.export_ui.caseIdEdit.setText(value if value else "")
+
+    def _onCaseIdSourceChanged(self, index):
+        volumeNode = self.measure_ui.volumeSelector.currentNode()
+        self._fill_case_id_from_source(volumeNode)
 
     def onPlaceLandmark(self, label):
         """Enter placement mode for a specific landmark label."""
@@ -180,6 +216,29 @@ class AssistController:
         for btn, _ in self.measure_ui.landmark_rows.values():
             btn.setText("Place")
             btn.setStyleSheet("")
+
+    def onShowHotkeys(self):
+        qt.QMessageBox.information(
+            slicer.util.mainWindow(), "Hotkeys",
+            ",          Previous volume\n"
+            ".          Next volume\n"
+            "r          Run inference\n"
+            "e          Export CSV\n"
+            "Shift+Arrow  Move active landmark 1 mm\n"
+            "F1         Show this help",
+        )
+
+    def _move_selected_landmark(self, dx, dy, step=1.0):
+        """Shift+Arrow: アクティブな点を step mm 移動する。RAS[0]=x軸、RAS[1]=y軸。"""
+        markupNode = self.measure_ui.markupSelector.currentNode()
+        if markupNode is None:
+            return
+        idx = markupNode.GetActiveControlPoint()
+        if idx < 0:
+            return
+        pos = [0.0, 0.0, 0.0]
+        markupNode.GetNthControlPointPosition(idx, pos)
+        markupNode.SetNthControlPointPosition(idx, pos[0] + dx * step, pos[1] + dy * step, pos[2])
 
     def _update_landmark_status_buttons(self, markupNode):
         """Update ✓/○ status indicators based on which points are placed."""
@@ -405,10 +464,11 @@ class AssistController:
             return
 
         caseId = manualCaseId if manualCaseId else self._format_counter_preview()
+        overwrite = self.export_ui.overwriteCheck.isChecked()
 
         try:
             exporter = ExportLogic(flip_x_axis=self.measure_ui.flipXAxisCheckBox.isChecked(), measurement_set=self._active_set)
-            csv_path = exporter.export_angles_csv(markupNode=markupNode, outputDir=outputDir, caseId=caseId)
+            csv_path = exporter.export_angles_csv(markupNode=markupNode, outputDir=outputDir, caseId=caseId, overwrite=overwrite)
         except ValueError as exc:
             self.export_ui.exportStatusLabel.setText(f"Error: {exc}")
             return
@@ -417,7 +477,29 @@ class AssistController:
             self.export_ui.exportStatusLabel.setText("Error: CSV export failed. See Python Console for details.")
             return
 
-        self.export_ui.exportStatusLabel.setText(f"CSV appended: {os.path.basename(csv_path)}")
+        action = "updated" if overwrite else "appended"
+        status = f"CSV {action}: {os.path.basename(csv_path)}"
+
+        if self.export_ui.exportTrainingDataCheck.isChecked():
+            volumeNode = self.measure_ui.volumeSelector.currentNode()
+            if volumeNode is None:
+                self.export_ui.exportStatusLabel.setText(f"{status} | Error: no volume for training data.")
+                return
+            try:
+                result = exporter.export_training_sample(
+                    volumeNode=volumeNode,
+                    markupNode=markupNode,
+                    outputDir=outputDir,
+                    caseId=caseId,
+                    overwrite=overwrite,
+                )
+                status += f" + {os.path.basename(result['npy'])}"
+            except Exception:
+                logging.exception("Training data export failed")
+                self.export_ui.exportStatusLabel.setText(f"{status} | Error: training export failed. See Python Console.")
+                return
+
+        self.export_ui.exportStatusLabel.setText(status)
 
     # --- Vector overlay ---
     def _updateVectorOverlays(self, label_to_ras3d):
@@ -443,6 +525,7 @@ class AssistController:
                 # as the active markup target (which would intercept placement clicks).
                 node.SetHideFromEditors(True)
                 node.CreateDefaultDisplayNodes()
+                node.SetDisplayVisibility(0)  # hide until both endpoints are set below
                 dn = node.GetDisplayNode()
                 if dn:
                     r, g, b = self._active_set.vector_colors[name]
@@ -459,9 +542,11 @@ class AssistController:
 
             n_pts = node.GetNumberOfControlPoints()
             if n_pts < 2:
+                wasModifying = node.StartModify()
                 node.RemoveAllControlPoints()
                 node.AddControlPoint(list(ep1))
                 node.AddControlPoint(list(ep2))
+                node.EndModify(wasModifying)
             else:
                 node.SetNthControlPointPosition(0, ep1[0], ep1[1], ep1[2])
                 node.SetNthControlPointPosition(1, ep2[0], ep2[1], ep2[2])

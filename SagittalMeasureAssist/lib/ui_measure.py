@@ -110,6 +110,10 @@ class MeasureUI:
         self.statusLabel.wordWrap = True
         form.addRow(self.statusLabel)
 
+        hintLabel = qt.QLabel("F1: Show hotkeys")
+        hintLabel.setStyleSheet("color: gray; font-size: 10px;")
+        form.addRow(hintLabel)
+
     def _rebuild_landmark_grid(self, mset):
         """Rebuild the per-landmark Place button grid for the given measurement set."""
         if self._landmark_inner is not None:

@@ -22,8 +22,12 @@ class AutoUI:
         self.runButton = qt.QPushButton("Run inference")
         form.addRow(self.runButton)
 
+        self.autoRunCheck = qt.QCheckBox("Auto-run inference on volume change")
+        self.autoRunCheck.setChecked(False)
+        form.addRow(self.autoRunCheck)
+
         self.heatmapCheckBox = qt.QCheckBox("Show heatmap")
-        self.heatmapCheckBox.setChecked(True)
+        self.heatmapCheckBox.setChecked(False)
         self.heatmapCheckBox.setEnabled(False)
         form.addRow(self.heatmapCheckBox)
 

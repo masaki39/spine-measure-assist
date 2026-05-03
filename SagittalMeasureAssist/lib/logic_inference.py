@@ -154,10 +154,16 @@ class OnnxInferenceLogic:
         outputs = self.session.run([self.output_name], {self.input_name: inp})
         coords_ij = self._postprocess(outputs[0], scale, pad_x, pad_y)
         heatmap_2d = self._build_overlay_heatmap(outputs[0], img2d.shape, scale, pad_x, pad_y)
-        # 書き込み
-        markupNode.RemoveAllControlPoints()
-        for idx, (x, y) in enumerate(coords_ij):
+        # モデルが予測するラベルのみ更新し、その他の点は保持する
+        label_to_idx = {}
+        for i in range(markupNode.GetNumberOfControlPoints()):
+            label_to_idx[markupNode.GetNthControlPointLabel(i)] = i
+
+        for key, (x, y) in zip(self.landmark_keys, coords_ij):
             ras = self._ijk_to_ras(volumeNode, x, y, 0.0)
-            markupNode.AddControlPoint(ras[0], ras[1], ras[2])
-            markupNode.SetNthControlPointLabel(idx, self.landmark_keys[idx])
+            if key in label_to_idx:
+                markupNode.SetNthControlPointPosition(label_to_idx[key], ras[0], ras[1], ras[2])
+            else:
+                markupNode.AddControlPoint(ras[0], ras[1], ras[2])
+                markupNode.SetNthControlPointLabel(markupNode.GetNumberOfControlPoints() - 1, key)
         return coords_ij, heatmap_2d

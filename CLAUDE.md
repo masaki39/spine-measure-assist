@@ -6,7 +6,8 @@
 - `SagittalMeasureAssist/` — UI付き計測アプリ（3D Slicer拡張）
 - `train/` — ランドマーク検出モデルの訓練・ONNX出力
   - `train/data/` — DICOMファイル置き場（K001形式でリネーム済み）
-  - `train/dataset/` — 訓練用 npy/json/nrrd ファイル（K001形式）
+  - `train/dataset/original/` — 訓練用 npy/json/nrrd ファイル（K001形式、5点）
+  - `train/dataset/l1pa/` — L1_center・L1PA追加アノテーション（K001形式、6点）
   - `train/runs/` — 訓練済みチェックポイント・ONNXモデル
   - `train/colabs/` — Google Colab用ノートブック（探索的）
   - `train/learning_curve/` — 学習曲線実験（探索的）
@@ -22,7 +23,7 @@ uv run python SagittalMeasureAssist/SagittalMeasureAssist.py
 
 # 訓練（ML依存が必要）— 標準: SmallUNet σ=5
 uv sync --extra ml
-uv run python train/train.py --data-dir train/dataset --backbone smallunet --sigma 5
+uv run python train/train.py --data-dir train/dataset/l1pa --backbone smallunet --sigma 5
 
 # ONNX出力
 uv run python train/export_onnx.py

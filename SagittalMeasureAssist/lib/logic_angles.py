@@ -103,7 +103,7 @@ def l1_pelvic_angle_deg(FH, S1_mid, L1_center):
     v2 = vector_from_points(FH, L1_center)
     cross = v1[0] * v2[1] - v1[1] * v2[0]
     dot = v1[0] * v2[0] + v1[1] * v2[1]
-    return math.degrees(math.atan2(cross, dot))
+    return -math.degrees(math.atan2(cross, dot))
 
 
 REQUIRED_KEYS = ["L1_ant", "L1_post", "S1_ant", "S1_post", "FH"]
