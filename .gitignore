@@ -10,6 +10,7 @@ venv/
 env/
 .env/
 *.egg-info/
+.uv-cache/
 
 # Build and CMake artifacts
 /build*/
@@ -31,10 +32,11 @@ env/
 *.orig
 .DS_Store
 
+# 生成画像（再生成可能）
 *.png
 
-# Data directory (DICOM, exported training data)
-train/*/
-data/
-dataset/
-runs/
+# DICOMデータ（患者情報、2.4GB）
+train/data/
+
+# 訓練データ（DICOM由来・大容量、5.7GB）
+train/dataset/
