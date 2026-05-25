@@ -92,18 +92,33 @@ uv run --with pydicom python scripts/inspect_dicom.py --scan train/data/
 
 ## 計測パラメータ
 
-### ランドマーク点（6点、`dataset/l1pa/` 標準）
+### ランドマーク命名規則（Phase 2 設計）
 
-| 名前 | 説明 |
+```
+{椎体}_{終板}_{前後}
+例: L3_sup_ant（L3椎体上終板前縁）、T4_inf_post（T4椎体下終板後縁）
+```
+
+- **椎体**: `C2`-`C7`, `T1`-`T12`, `L1`-`L5`, `S1`
+- **終板**: `sup`（上終板）/ `inf`（下終板）
+- **前後**: `ant`（前縁）/ `post`（後縁）
+- **大腿骨頭**: `FH_L`（左）/ `FH_R`（右）
+- **合計**: 24椎体 × 4点 + 2点 = **98点**
+
+### Phase 1 との対応（後方互換）
+
+| Phase 1（現行） | Phase 2（予定） |
 |---|---|
-| L1_ant | L1椎体上終板 前縁 |
-| L1_post | L1椎体上終板 後縁 |
-| S1_ant | S1椎体上終板 前縁 |
-| S1_post | S1椎体上終板 後縁 |
-| FH | 大腿骨頭中心（両側平均） |
-| L1_center | L1椎体中心 |
+| `L1_ant` | `L1_sup_ant` |
+| `L1_post` | `L1_sup_post` |
+| `S1_ant` | `S1_sup_ant` |
+| `S1_post` | `S1_sup_post` |
+| `FH` | `(FH_L + FH_R) / 2` で派生 |
+| `L1_center` | 4点平均で派生 |
 
-### 計測角度（5角度）
+### 計測角度
+
+**Phase 1（現行、5角度）**
 
 | 名前 | 定義 |
 |---|---|
@@ -111,9 +126,21 @@ uv run --with pydicom python scripts/inspect_dicom.py --scan train/data/
 | PT | Pelvic Tilt |
 | SS | Sacral Slope |
 | LL | Lumbosacral Lordosis（L1-S1 Cobb角） |
-| L1PA | FH→S1中点ベクトルとFH→L1_centerベクトルの符号付き角度 |
+| L1PA | FH→S1中点とFH→L1_centerの符号付き角度 |
 
 PI = SS + PT の恒等式が成立する（`test_compute_angles_pi_ss_pt_relationship` で保護）。
+
+**Phase 2 追加予定角度**
+
+| 名前 | 定義 | 使用点 |
+|---|---|---|
+| TK | 胸椎後弯（T4-T12 Cobb） | T4_sup, T12_inf |
+| CL | 頸椎前弯（C2-C7 Cobb） | C2_sup, C7_inf |
+| T1S | T1傾斜（水平との角度） | T1_sup |
+| SVA | 矢状鉛直軸（C7-S1水平距離） | C7_sup, S1_sup_post |
+| TPA | T1骨盤角 | T1_sup, S1_sup, FH |
+| PI-LL | 骨盤不一致 | 派生 |
+| 各分節角度 | 任意2椎体間のCobb角 | 自由設定 |
 
 ---
 

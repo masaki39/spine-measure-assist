@@ -91,18 +91,18 @@ train/runs/                   訓練済みチェックポイント・ONNX・spli
 
 ## 計測パラメータ
 
-### ランドマーク（6 点）
+### ランドマーク命名規則（Phase 2 設計）
 
-| 名前 | 場所 |
-|---|---|
-| L1_ant | L1 椎体上終板 前縁 |
-| L1_post | L1 椎体上終板 後縁 |
-| S1_ant | S1 椎体上終板 前縁 |
-| S1_post | S1 椎体上終板 後縁 |
-| FH | 両側大腿骨頭中心（平均） |
-| L1_center | L1 椎体中心 |
+```
+{椎体}_{終板}_{前後}  例: L3_sup_ant, T4_inf_post
+```
 
-### 計測角度（5 角度）
+C2–S1 全椎体 × 4 点（上下終板 × 前後縁）+ FH_L / FH_R = **98 点**
+
+> **Phase 1（現行）** は 6 点のみ: `L1_ant`, `L1_post`, `S1_ant`, `S1_post`, `FH`, `L1_center`
+> 詳細は `RESEARCH.md` の Phase 設計を参照。
+
+### Phase 1 計測角度（5 角度）
 
 | 名前 | 定義 |
 |---|---|
@@ -112,7 +112,9 @@ train/runs/                   訓練済みチェックポイント・ONNX・spli
 | LL | Lumbosacral Lordosis（L1–S1 Cobb 角） |
 | L1PA | FH→S1_mid と FH→L1_center の符号付き角度 |
 
-PI = SS + PT の関係が成立する。
+### Phase 2 追加予定角度
+
+TK（胸椎後弯）、CL（頸椎前弯）、T1S、SVA、TPA、PI-LL、各分節 Cobb 角
 
 ---
 

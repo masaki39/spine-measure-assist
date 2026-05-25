@@ -16,6 +16,12 @@ import numpy as np
 import onnxruntime as ort
 import torch
 
+# Allow importing as both `train.infer_onnx` (tests) and direct script execution
+import sys as _sys, os as _os
+_HERE = _os.path.dirname(_os.path.abspath(__file__))
+if _HERE not in _sys.path:
+    _sys.path.insert(0, _HERE)
+
 from dataset import LANDMARK_ORDER, _percentile_clip_norm, _resize_with_padding
 
 
