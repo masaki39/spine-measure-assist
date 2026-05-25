@@ -35,6 +35,9 @@ env/
 # 生成画像（再生成可能）
 *.png
 
+# PyTorchチェックポイント（再生成可能・大容量）
+*.pt
+
 # DICOMデータ（患者情報、2.4GB）
 train/data/
 

@@ -60,6 +60,9 @@ def _build_augmentation():
             A.Rotate(limit=15, border_mode=0, p=0.8),
             A.ElasticTransform(alpha=50, sigma=5, p=0.5),
             A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
+            # X線ドメイン固有: 量子ノイズ・検出器ガンマ特性のシミュレーション
+            A.GaussNoise(p=0.4),
+            A.RandomGamma(gamma_limit=(75, 130), p=0.4),
         ],
         keypoint_params=A.KeypointParams(format="xy", remove_invisible=False),
     )

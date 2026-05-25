@@ -31,6 +31,9 @@ def parse_args():
     p.add_argument("--backbone", default="smallunet", help="Model backbone: 'smallunet' or segmentation_models_pytorch encoder (e.g. 'resnet34', 'efficientnet-b3')")
     p.add_argument("--augment", action="store_true", help="Enable data augmentation (rotation, elastic transform, brightness/contrast)")
     p.add_argument("--loss", default="mse", choices=["mse", "awl"], help="Loss function: mse (default) or awl (Adaptive Wing Loss)")
+    p.add_argument("--split-seed", type=int, default=42, help="Random seed for reproducible train/val/test split")
+    p.add_argument("--val-ratio", type=float, default=0.1, help="Fraction of data for validation (default: 0.1)")
+    p.add_argument("--test-ratio", type=float, default=0.1, help="Fraction of data held out for final test (default: 0.1)")
     return p.parse_args()
 
 
@@ -131,18 +134,44 @@ def main():
 
     n_total = len(train_dataset)
     if n_total == 1:
-        print("WARNING: サンプルが1件のみ。訓練データを検証にも使用します。")
+        print("WARNING: サンプルが1件のみ。訓練データを検証・テストにも使用します。")
         train_set = train_dataset
         val_set = val_dataset
+        test_set = val_dataset
+        splits_map = {"train": [0], "val": [0], "test": [0]}
     else:
-        n_val = max(1, n_total // 10)
-        n_train = n_total - n_val
-        indices = torch.randperm(n_total).tolist()
-        train_set = Subset(train_dataset, indices[:n_train])
-        val_set = Subset(val_dataset, indices[n_train:])
+        import random
+        rng = random.Random(args.split_seed)
+        all_indices = list(range(n_total))
+        rng.shuffle(all_indices)
+
+        n_test = max(1, int(n_total * args.test_ratio))
+        n_val = max(1, int(n_total * args.val_ratio))
+        n_train = n_total - n_val - n_test
+
+        test_idx = all_indices[:n_test]
+        val_idx = all_indices[n_test:n_test + n_val]
+        train_idx = all_indices[n_test + n_val:]
+
+        train_set = Subset(train_dataset, train_idx)
+        val_set = Subset(val_dataset, val_idx)
+        test_set = Subset(val_dataset, test_idx)
+
+        # Map indices back to case IDs for splits.json
+        all_samples = train_dataset.dataset.samples if hasattr(train_dataset, "dataset") else train_dataset.samples
+        def idx_to_caseid(idxs):
+            return [all_samples[i][0] for i in idxs]
+        splits_map = {
+            "train": idx_to_caseid(train_idx),
+            "val": idx_to_caseid(val_idx),
+            "test": idx_to_caseid(test_idx),
+        }
+
+        print(f"Split (seed={args.split_seed}): train={len(train_idx)}, val={len(val_idx)}, test={len(test_idx)}")
 
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
     val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
     loss_fn = adaptive_wing_loss if args.loss == "awl" else lambda p, t: torch.mean((p - t) ** 2)
 
@@ -180,6 +209,13 @@ def main():
             pg["lr"] = args.lr
         print(f"Loaded checkpoint: {args.checkpoint} (epoch {ckpt.get('epoch', '?')}, val {ckpt.get('val_loss', '?'):.4f})")
 
+    # Save split info for reproducible test evaluation
+    import json as _json
+    splits_path = save_dir / "splits.json"
+    with open(splits_path, "w") as fp:
+        _json.dump(splits_map, fp, indent=2)
+    print(f"Splits saved to {splits_path}")
+
     best_val = float("inf")
     for epoch in range(1, args.epochs + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, device, loss_fn)
@@ -197,6 +233,12 @@ def main():
             best_val = val_loss
             torch.save(ckpt, save_dir / "best.pt")
             print(f"  -> saved best.pt (val {val_loss:.4f})")
+
+    # Final test evaluation on held-out set
+    test_loss = validate(model, test_loader, device, loss_fn)
+    print(f"\n=== Final test loss (held-out, N={len(test_set)}): {test_loss:.4f} ===")
+    print(f"To evaluate angles/MRE on test set:")
+    print(f"  uv run python train/infer_onnx.py --model {save_dir}/best.onnx --dir {args.data_dir} --splits {splits_path} --subset test")
 
 
 if __name__ == "__main__":

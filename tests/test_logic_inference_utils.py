@@ -57,22 +57,23 @@ def test_pad_resize_wide_image_scale():
 def test_postprocess_coords():
     logic = OnnxInferenceLogic()
     logic.target_hw = (64, 64)
-    # scale=1.0, pad_x=0, pad_y=0 -> coords == heatmap peak
     hm = np.zeros((1, 2, 64, 64), dtype=np.float32)
     hm[0, 0, 10, 20] = 1.0  # landmark0: y=10, x=20
     hm[0, 1, 30, 40] = 1.0  # landmark1: y=30, x=40
-    coords = logic._postprocess(hm, scale=1.0, pad_x=0, pad_y=0)
+    coords, confs = logic._postprocess(hm, scale=1.0, pad_x=0, pad_y=0)
     assert math.isclose(coords[0][0], 20.0, abs_tol=0.5)
     assert math.isclose(coords[0][1], 10.0, abs_tol=0.5)
     assert math.isclose(coords[1][0], 40.0, abs_tol=0.5)
     assert math.isclose(coords[1][1], 30.0, abs_tol=0.5)
+    assert math.isclose(confs[0], 1.0, abs_tol=1e-6)
+    assert math.isclose(confs[1], 1.0, abs_tol=1e-6)
 
 
 def test_postprocess_with_padding():
     logic = OnnxInferenceLogic()
-    # pad_x=10, pad_y=5, scale=2.0 -> x_orig=(x-10)/2, y_orig=(y-5)/2
     hm = np.zeros((1, 1, 64, 64), dtype=np.float32)
     hm[0, 0, 15, 30] = 1.0  # y=15, x=30
-    coords = logic._postprocess(hm, scale=2.0, pad_x=10, pad_y=5)
+    coords, confs = logic._postprocess(hm, scale=2.0, pad_x=10, pad_y=5)
     assert math.isclose(coords[0][0], (30 - 10) / 2.0, abs_tol=0.5)
     assert math.isclose(coords[0][1], (15 - 5) / 2.0, abs_tol=0.5)
+    assert math.isclose(confs[0], 1.0, abs_tol=1e-6)
