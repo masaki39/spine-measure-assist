@@ -12,16 +12,30 @@
 
 ```
 train/
+  # Phase 1（現行・変更しない）
   train.py          訓練（CLI）
   model.py          SmallUNet
-  dataset.py        HeatmapDataset
+  dataset.py        HeatmapDataset（6点）
   export_onnx.py    PyTorch → ONNX
   infer_onnx.py     推論・評価（MRE/角度MAE/Bland-Altman/ICC）
-  colab/            Google Colab GPU ノートブック（train / finetune）
+
+  # Phase 2（新規）
+  landmark_scheme.py   96点定義・BBox導出 の唯一の源泉
+  dataset_phase2.py    Phase2 Dataset（mode=full/stage1/stage2）
+  model_hrnet.py       HRNet-W32 + heatmap head（Stage2）
+  export_onnx_phase2.py  Stage2 PT → ONNX
+  infer_phase2.py      2段階推論・評価
+
+  colab/
+    train.ipynb           Phase1 訓練（GPU）
+    finetune.ipynb        Phase1 fine-tune（GPU）
+    train_detector.ipynb  Stage1 YOLOv8 訓練（GPU）
+    train_phase2.ipynb    Stage2 HRNet 訓練（GPU）
   learning_curve/   学習曲線実験（探索的、Colabで実行）
   data/             DICOMファイル（gitignore）
-  dataset/original/ 5点アノテーション（L1PA なし）
-  dataset/l1pa/     6点アノテーション（現在の標準、L1_center 追加）
+  dataset/original/ 5点アノテーション（Phase1）
+  dataset/l1pa/     6点アノテーション（Phase1 現行標準）
+  dataset/phase2/   96点アノテーション（Phase2、gitignore）
   runs/             訓練済みモデル・splits.json
 
 SagittalMeasureAssist/lib/
@@ -32,8 +46,9 @@ SagittalMeasureAssist/lib/
 scripts/
   inspect_dicom.py          DICOM調査
   inter_annotator_error.py  アノテーション間誤差（human baseline）
+  extract_dataset.py        DB → npy + JSON テンプレート生成（Phase2）
 
-tests/                193テスト
+tests/                193+テスト
 ```
 
 ---
@@ -43,6 +58,8 @@ tests/                193テスト
 ```bash
 # テスト
 uv run -m pytest
+
+# --- Phase 1（現行）---
 
 # 訓練（標準: SmallUNet σ=5, AWL, augment, seed=42）
 uv sync --extra ml
@@ -65,56 +82,98 @@ uv run python train/infer_onnx.py \
 
 # Human baseline
 uv run python scripts/inter_annotator_error.py
+
+# --- Phase 2（新規）---
+
+# DB から画像抽出 + アノテーションテンプレート生成
+uv run python scripts/extract_dataset.py
+uv run python scripts/extract_dataset.py --limit 3  # テスト用
+
+# Phase2 ONNX変換（訓練後）
+uv run python train/export_onnx_phase2.py \
+  --checkpoint train/runs/phase2_best.pt \
+  --output     train/runs/phase2_best.onnx
+
+# 2段階推論評価（GT BBoxを使用）
+uv run python train/infer_phase2.py \
+  --stage1 train/runs/detector.onnx \
+  --stage2 train/runs/phase2_best.onnx \
+  --dir    train/dataset/phase2 \
+  --use-gt-boxes
 ```
 
 ---
 
 ## データ準備
 
-### 手動リネーム（DICOMファイル）
+### Phase 2 データ抽出（DB ベース）
 
 ```bash
-for f in train/data/*; do
-  id=$(magick identify -verbose "$f" 2>/dev/null | grep "dcm:Patient'sID:" | awk -F': ' '{print $2}' | tr -d ' ')
-  n=$(echo "$id" | sed 's/K//')
-  mv "$f" "$(dirname $f)/K$(printf '%03d' $n)"
-done
+# 全件抽出（初回）
+uv run python scripts/extract_dataset.py
+
+# テスト抽出（3件）
+uv run python scripts/extract_dataset.py --limit 3
+
+# dry-run（DBクエリのみ、ファイル書き込みなし）
+uv run python scripts/extract_dataset.py --dry-run
 ```
+
+出力先: `train/dataset/phase2/`
+- `{case_id}_image.npy` — 2D float32 画像
+- `{case_id}_landmarks.json` — アノテーションテンプレート（landmarks_ijk は全 null）
 
 ### DICOM調査
 
 ```bash
-uv run --with pydicom python scripts/inspect_dicom.py <file>
-uv run --with pydicom python scripts/inspect_dicom.py --scan train/data/
+uv run python scripts/inspect_dicom.py <file>
+uv run python scripts/inspect_dicom.py --scan train/data/
 ```
 
 ---
 
 ## 計測パラメータ
 
-### ランドマーク命名規則（Phase 2 設計）
+### ランドマーク命名規則（Phase 2 実装済み）
+
+`train/landmark_scheme.py` が**唯一の定義源**。命名は番号付き角点方式。
 
 ```
-{椎体}_{終板}_{前後}
-例: L3_sup_ant（L3椎体上終板前縁）、T4_inf_post（T4椎体下終板後縁）
+番号の意味:
+  1 = 上前縁 (sup_ant)
+  2 = 上後縁 (sup_post)
+  3 = 下後縁 (inf_post)
+  4 = 下前縁 (inf_ant)
 ```
 
-- **椎体**: `C2`-`C7`, `T1`-`T12`, `L1`-`L5`, `S1`
-- **終板**: `sup`（上終板）/ `inf`（下終板）
-- **前後**: `ant`（前縁）/ `post`（後縁）
-- **大腿骨頭**: `FH_L`（左）/ `FH_R`（右）
-- **合計**: 24椎体 × 4点 + 2点 = **98点**
+| グループ | キー例 | 点数 |
+|---|---|---|
+| 頭蓋骨 | `EAC` | 1 |
+| C2（下縁のみ） | `C2_3`, `C2_4` | 2 |
+| C3–L5（4角点） | `C3_1`〜`C3_4`, ... | 88 |
+| L6（optional） | `L6_1`〜`L6_4` | 0〜4 |
+| S1（上縁のみ） | `S1_1`, `S1_2` | 2 |
+| 大腿骨頭 | `FH` | 1 |
+| 大腿骨 | `femur_prox`, `femur_dist` | 2 |
+| **合計** | | **96（+L6 最大100）** |
 
-### Phase 1 との対応（後方互換）
+### 解剖バリアント
 
-| Phase 1（現行） | Phase 2（予定） |
-|---|---|
-| `L1_ant` | `L1_sup_ant` |
-| `L1_post` | `L1_sup_post` |
-| `S1_ant` | `S1_sup_ant` |
-| `S1_post` | `S1_sup_post` |
-| `FH` | `(FH_L + FH_R) / 2` で派生 |
-| `L1_center` | 4点平均で派生 |
+JSON の `lumbar_variant` フィールドで管理:
+- `"normal"`: 標準（L5 が最下位腰椎）
+- `"lumbarization"`: S1 が腰椎化し L6 が存在
+- `"sacralization"`: L5 が仙骨化し L5 キーが null
+
+### BBox領域（Stage 1 検出対象、27クラス）
+
+`skull`, `C2`, `C3`-`C7`, `T1`-`T12`, `L1`-`L5`, `L6`（任意）, `S1`, `pelvis`
+
+BBoxはランドマーク座標から自動導出（`derive_bboxes()` in `landmark_scheme.py`）。
+
+### データベース
+
+`/Volumes/T7 Shield/kch-organized/dicom_index.db`
+- `images` テーブル: `region='WHOLE_SPINE' AND view='LAT'` で 186件抽出
 
 ### 計測角度
 
@@ -132,15 +191,14 @@ PI = SS + PT の恒等式が成立する（`test_compute_angles_pi_ss_pt_relatio
 
 **Phase 2 追加予定角度**
 
-| 名前 | 定義 | 使用点 |
+| 名前 | 定義 | 使用キー |
 |---|---|---|
-| TK | 胸椎後弯（T4-T12 Cobb） | T4_sup, T12_inf |
-| CL | 頸椎前弯（C2-C7 Cobb） | C2_sup, C7_inf |
-| T1S | T1傾斜（水平との角度） | T1_sup |
-| SVA | 矢状鉛直軸（C7-S1水平距離） | C7_sup, S1_sup_post |
-| TPA | T1骨盤角 | T1_sup, S1_sup, FH |
+| TK | 胸椎後弯（T4-T12 Cobb） | `T4_1/T4_2`, `T12_3/T12_4` |
+| CL | 頸椎前弯（C2-C7 Cobb） | `C2_3/C2_4`, `C7_3/C7_4` |
+| T1S | T1傾斜 | `T1_1`, `T1_2` |
+| SVA | 矢状鉛直軸 | `C7_1`, `S1_1` |
+| TPA | T1骨盤角 | `T1_1`, `S1_1`, `FH` |
 | PI-LL | 骨盤不一致 | 派生 |
-| 各分節角度 | 任意2椎体間のCobb角 | 自由設定 |
 
 ---
 
@@ -160,8 +218,16 @@ PI = SS + PT の恒等式が成立する（`test_compute_angles_pi_ss_pt_relatio
 
 ### データフォーマット
 
-JSONの `landmarks_ijk` フィールドのキー名・座標系を変更する場合は
-`scripts/inter_annotator_error.py` と `train/dataset.py` の両方を更新すること。
+**Phase 1（`dataset/l1pa/`）**: JSONキー変更時は `scripts/inter_annotator_error.py` と `train/dataset.py` を両方更新。
+
+**Phase 2（`dataset/phase2/`）**: ランドマーク定義は `train/landmark_scheme.py` のみを変更する。他のモジュール（`dataset_phase2.py`, `infer_phase2.py`）はそこからインポートしている。
+
+### Phase 2 固有ルール
+
+- `landmark_scheme.py` は **すべての定義の唯一の源泉**。キーセット・BBoxクラス・チャネルマッピングをここ以外で定義しない
+- `null` ランドマーク（未アノテーション）は heatmap=0、loss 計算から除外される
+- BBox は常に `derive_bboxes()` で自動導出し、JSON には保存しない
+- L6 等のオプションランドマークは JSON テンプレートに含まれるが null のまま保持できる
 
 ### Colabノートブック
 
