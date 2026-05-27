@@ -100,7 +100,7 @@ def save_json(meta: Dict, dataset_dir: str, case_id: str) -> None:
 
 
 def detect_variant(placed_keys: set) -> str:
-    """配置済みキーからバリアントを自動検出する。"""
+    """配置済みキーからバリアントを自動検出する。保存時・進捗集計時に使用。"""
     if any(f"L6_{i}" in placed_keys for i in range(1, 5)):
         return "lumbarization"
     t12 = any(f"T12_{i}" in placed_keys for i in range(1, 5))
@@ -257,7 +257,7 @@ def get_placed_keys(markup_node) -> set:
 
 def active_keys_for_variant(variant: str) -> List[str]:
     """
-    バリアントに応じてアノテーション対象キーリストを返す。
+    バリアントに応じてアノテーション対象キーリストを返す（進捗計算・保存用）。
     - normal: L6 を除く
     - lumbarization: L6 を含む
     - sacralization: L5 を除く
@@ -270,5 +270,4 @@ def active_keys_for_variant(variant: str) -> List[str]:
         exclude.update(f"L5_{i}" for i in range(1, 5))
     if variant == "t12_missing":
         exclude.update(f"T12_{i}" for i in range(1, 5))
-
     return [k for k in ALL_LANDMARK_KEYS if k not in exclude]

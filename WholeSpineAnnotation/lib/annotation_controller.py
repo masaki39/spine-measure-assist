@@ -18,7 +18,6 @@ from dataset_io import (
     count_annotated,
     create_markup_node,
     create_volume_node,
-    detect_variant,
     discover_cases,
     get_placed_keys,
     load_json,
@@ -54,6 +53,7 @@ class AnnotationController:
         self._markup_observer_tags: list = []
         self._shortcuts: list = []
         self._modified: bool = False
+        self._loading_variant: bool = False
 
         self._connect_signals()
         self._setup_shortcuts()
@@ -72,6 +72,8 @@ class AnnotationController:
         ui.caseCombo.connect("currentIndexChanged(int)", self._on_case_changed)
 
         self.annotate_ui.placeNextButton.connect("clicked()", self._on_place_next)
+        self.annotate_ui.lumbarCombo.connect("currentIndexChanged(int)", self._on_lumbar_changed)
+        self.annotate_ui.hasT12Check.connect("toggled(bool)", self._on_t12_changed)
         self.save_ui.saveButton.connect("clicked()", self._on_save)
 
         # 各 Place ボタン
@@ -175,13 +177,51 @@ class AnnotationController:
 
         self._pending_label = None
         self.annotate_ui.set_active_landmark(None)
+        self.annotate_ui.tabWidget.setCurrentIndex(0)
         self._modified = False
+        self._load_variant_into_ui(self._meta.get("lumbar_variant", "normal"))
         self._refresh_ui()
         self.save_ui.set_status(f"Loaded {case_id}")
 
     # ------------------------------------------------------------------ #
     #  ランドマーク配置
     # ------------------------------------------------------------------ #
+
+    def _on_lumbar_changed(self, index: int):
+        if not self._loading_variant:
+            self._refresh_ui()
+
+    def _on_t12_changed(self, checked: bool):
+        if not self._loading_variant:
+            self._refresh_ui()
+
+    def _get_variant(self) -> str:
+        """UIの選択からバリアント文字列を返す。"""
+        lumbar = self.annotate_ui.lumbarCombo.currentIndex  # 0=L5, 1=L4, 2=L6
+        has_t12 = self.annotate_ui.hasT12Check.isChecked()
+        if lumbar == 2:
+            return "lumbarization"
+        if lumbar == 1:
+            return "sacralization"
+        if not has_t12:
+            return "t12_missing"
+        return "normal"
+
+    def _load_variant_into_ui(self, variant: str):
+        """保存済みバリアントをUIコントロールに反映する。"""
+        self._loading_variant = True
+        ui = self.annotate_ui
+        ui.hasT12Check.setChecked(True)
+        if variant == "lumbarization":
+            ui.lumbarCombo.setCurrentIndex(2)
+        elif variant == "sacralization":
+            ui.lumbarCombo.setCurrentIndex(1)
+        elif variant == "t12_missing":
+            ui.lumbarCombo.setCurrentIndex(0)
+            ui.hasT12Check.setChecked(False)
+        else:
+            ui.lumbarCombo.setCurrentIndex(0)
+        self._loading_variant = False
 
     def _on_place_next(self):
         """現在タブ優先で次の未設定ランドマークに配置モードを切り替える。"""
@@ -190,7 +230,7 @@ class AnnotationController:
             return
         try:
             placed = get_placed_keys(self._markup_node)
-            active = active_keys_for_variant(detect_variant(placed))
+            active = active_keys_for_variant(self._get_variant())
             active_set = set(active)
 
             current_tab = self.annotate_ui.tabWidget.currentIndex
@@ -274,8 +314,7 @@ class AnnotationController:
             return
 
         case_id = self._case_ids[self._current_idx]
-        placed = get_placed_keys(self._markup_node)
-        variant = detect_variant(placed)
+        variant = self._get_variant()
         try:
             updated = save_landmarks_from_node(
                 self._meta, self._markup_node, self._volume_node, variant
@@ -297,7 +336,7 @@ class AnnotationController:
         if self._markup_node is None:
             return
         placed = get_placed_keys(self._markup_node)
-        active = active_keys_for_variant(detect_variant(placed))
+        active = active_keys_for_variant(self._get_variant())
         self.annotate_ui.update_status(placed, active)
         self.dataset_ui.update_case_progress(len(placed & set(active)), len(active))
 

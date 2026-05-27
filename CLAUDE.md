@@ -239,6 +239,15 @@ PI = SS + PT の恒等式が成立する（`test_compute_angles_pi_ss_pt_relatio
 - `pip3 install` 禁止。`uvx --with <pkg> python3 script.py` を使うこと。
 - ML依存: `uv sync --extra ml` でインストール。
 
+### 3D Slicer / PythonQt 注意事項
+
+- Qt の **Q_PROPERTY** は PythonQt ではメソッドではなく **属性**としてアクセスする。
+  括弧を付けると `'int' object is not callable` エラーになる。
+  例: `tabWidget.currentIndex`（○）、`tabWidget.currentIndex()`（✗）
+  該当する代表的プロパティ: `QTabWidget.currentIndex`, `QComboBox.currentIndex`,
+  `QAbstractButton.checked` など。
+- 通常のメソッド（`isChecked()`, `setText()` 等）は括弧が必要。
+
 ### テスト方針
 
 テストの目的は「実装時の意図がその後に意図せず変更されるのを防ぐ」こと。

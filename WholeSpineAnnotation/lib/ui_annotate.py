@@ -38,6 +38,21 @@ class AnnotateUI:
         top_row.addWidget(self.progressLabel)
         vbox.addLayout(top_row)
 
+        # ---- バリアント設定 ----
+        variant_row = qt.QHBoxLayout()
+        variant_row.addWidget(qt.QLabel("腰椎数:"))
+        self.lumbarCombo = qt.QComboBox()
+        self.lumbarCombo.addItems(["L5 (通常)", "L4 (sacralization)", "L6 (lumbarization)"])
+        self.lumbarCombo.setFixedWidth(160)
+        variant_row.addWidget(self.lumbarCombo)
+        variant_row.addSpacing(12)
+        variant_row.addWidget(qt.QLabel("T12:"))
+        self.hasT12Check = qt.QCheckBox("あり")
+        self.hasT12Check.setChecked(True)
+        variant_row.addWidget(self.hasT12Check)
+        variant_row.addStretch()
+        vbox.addLayout(variant_row)
+
         # ---- 現在配置中のランドマーク表示 ----
         self.activeLandmarkLabel = qt.QLabel("— 待機中 —")
         self.activeLandmarkLabel.setAlignment(qt.Qt.AlignCenter)
