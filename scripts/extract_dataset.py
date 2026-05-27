@@ -64,6 +64,7 @@ def extract_one(
     base_dir: Path,
     out_dir: Path,
     dry_run: bool = False,
+    force: bool = False,
 ) -> bool:
     """1ケースを処理する。成功したら True を返す。"""
     case_id = row["patient_id"]
@@ -76,7 +77,7 @@ def extract_one(
     npy_path = out_dir / f"{case_id}_image.npy"
     json_path = out_dir / f"{case_id}_landmarks.json"
 
-    if npy_path.exists() and json_path.exists():
+    if npy_path.exists() and json_path.exists() and not force:
         print(f"  [SKIP] Already exists: {case_id}")
         return True
 
@@ -111,6 +112,8 @@ def main():
     parser.add_argument("--base", default=DEFAULT_BASE, help="DICOM root directory")
     parser.add_argument("--out", default=str(DEFAULT_OUT), help="Output directory")
     parser.add_argument("--limit", type=int, default=None, help="Process at most N cases (テスト用)")
+    parser.add_argument("--case", type=str, default=None, help="特定ケースIDのみ処理 (例: K004)")
+    parser.add_argument("--force", action="store_true", help="既存ファイルを上書きして再生成")
     parser.add_argument("--dry-run", action="store_true", help="DBクエリのみ実行、ファイル書き込みなし")
     args = parser.parse_args()
 
@@ -128,10 +131,15 @@ def main():
 
     con = sqlite3.connect(str(db_path))
     con.row_factory = sqlite3.Row
-    query = "SELECT id, patient_id, path FROM images WHERE region='WHOLE_SPINE' AND view='LAT' ORDER BY patient_id"
+    params: list = []
+    query = "SELECT id, patient_id, path FROM images WHERE region='WHOLE_SPINE' AND view='LAT'"
+    if args.case:
+        query += " AND patient_id = ?"
+        params.append(args.case)
+    query += " ORDER BY patient_id"
     if args.limit:
         query += f" LIMIT {args.limit}"
-    rows = con.execute(query).fetchall()
+    rows = con.execute(query, params).fetchall()
     con.close()
 
     print(f"対象: {len(rows)} 件")
@@ -140,7 +148,7 @@ def main():
 
     ok = 0
     for row in rows:
-        if extract_one(dict(row), base_dir, out_dir, dry_run=args.dry_run):
+        if extract_one(dict(row), base_dir, out_dir, dry_run=args.dry_run, force=args.force):
             ok += 1
 
     print(f"\n完了: {ok}/{len(rows)} 件")
