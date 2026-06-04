@@ -33,10 +33,14 @@ train/
     train_phase2.ipynb    Stage2 HRNet 訓練（GPU）
   learning_curve/   学習曲線実験（探索的、Colabで実行）
   data/             DICOMファイル（gitignore）
+  runs/             訓練済みモデル・splits.json
+
+/Volumes/T7 Shield/dicom/kch-organized/
+  dicom_index.db    SQLite DB
   dataset/original/ 5点アノテーション（Phase1）
   dataset/l1pa/     6点アノテーション（Phase1 現行標準）
-  dataset/phase2/   96点アノテーション（Phase2、gitignore）
-  runs/             訓練済みモデル・splits.json
+  dataset/phase2/   96点アノテーション（Phase2）
+  K001/... K308/    DICOMファイル
 
 SagittalMeasureAssist/lib/
   logic_angles.py     角度計算の源泉（PI/PT/SS/LL/L1PA）
@@ -64,7 +68,7 @@ uv run -m pytest
 # 訓練（標準: SmallUNet σ=5, AWL, augment, seed=42）
 uv sync --extra ml
 uv run python train/train.py \
-  --data-dir train/dataset/l1pa --backbone smallunet --sigma 5 \
+  --data-dir "/Volumes/T7 Shield/dicom/kch-organized/dataset/l1pa" --backbone smallunet --sigma 5 \
   --augment --loss awl --split-seed 42 --epochs 50
 
 # ONNX出力
@@ -73,11 +77,11 @@ uv run python train/export_onnx.py \
 
 # 定量評価（全指標）
 uv run python train/infer_onnx.py \
-  --model train/runs/best.onnx --dir train/dataset/l1pa
+  --model train/runs/best.onnx --dir "/Volumes/T7 Shield/dicom/kch-organized/dataset/l1pa"
 
 # テストセット限定評価
 uv run python train/infer_onnx.py \
-  --model train/runs/best.onnx --dir train/dataset/l1pa \
+  --model train/runs/best.onnx --dir "/Volumes/T7 Shield/dicom/kch-organized/dataset/l1pa" \
   --splits train/runs/splits.json --subset test
 
 # Human baseline
@@ -98,7 +102,7 @@ uv run python train/export_onnx_phase2.py \
 uv run python train/infer_phase2.py \
   --stage1 train/runs/detector.onnx \
   --stage2 train/runs/phase2_best.onnx \
-  --dir    train/dataset/phase2 \
+  --dir    "/Volumes/T7 Shield/dicom/kch-organized/dataset/phase2" \
   --use-gt-boxes
 ```
 
@@ -119,7 +123,7 @@ uv run python scripts/extract_dataset.py --limit 3
 uv run python scripts/extract_dataset.py --dry-run
 ```
 
-出力先: `train/dataset/phase2/`
+出力先: `/Volumes/T7 Shield/dicom/kch-organized/dataset/phase2/`
 - `{case_id}_image.npy` — 2D float32 画像
 - `{case_id}_landmarks.json` — アノテーションテンプレート（landmarks_ijk は全 null）
 
@@ -172,7 +176,7 @@ BBoxはランドマーク座標から自動導出（`derive_bboxes()` in `landma
 
 ### データベース
 
-`/Volumes/T7 Shield/kch-organized/dicom_index.db`
+`/Volumes/T7 Shield/dicom/kch-organized/dicom_index.db`
 - `images` テーブル: `region='WHOLE_SPINE' AND view='LAT'` で 186件抽出
 
 ### 計測角度

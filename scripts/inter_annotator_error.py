@@ -1,5 +1,5 @@
 """
-Inter-annotator error between train/dataset/original/ (5 points) and train/dataset/l1pa/ (6 points).
+Inter-annotator error between dataset/original/ (5 points) and dataset/l1pa/ (6 points).
 Metrics:
   - MRE (Mean Radial Error) in mm per landmark and overall
   - MAE (Mean Absolute Error) in degrees per angle
@@ -8,7 +8,7 @@ import json
 import math
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent / "train/dataset"
+ROOT = Path("/Volumes/T7 Shield/dicom/kch-organized/dataset")
 ORIG = ROOT / "original"
 L1PA = ROOT / "l1pa"
 

@@ -6,13 +6,13 @@ Phase 2 二段階推論（Stage1 ONNX + Stage2 ONNX）と評価。
   uv run python train/infer_phase2.py \\
     --stage1 train/runs/detector.onnx \\
     --stage2 train/runs/phase2_best.onnx \\
-    --image  train/dataset/phase2/K001_image.npy
+    --image  "/Volumes/T7 Shield/dicom/kch-organized/dataset/phase2/K001_image.npy"
 
   # ディレクトリ一括評価（GT JSON が必要）
   uv run python train/infer_phase2.py \\
     --stage1 train/runs/detector.onnx \\
     --stage2 train/runs/phase2_best.onnx \\
-    --dir    train/dataset/phase2
+    --dir    "/Volumes/T7 Shield/dicom/kch-organized/dataset/phase2"
 """
 
 from __future__ import annotations
