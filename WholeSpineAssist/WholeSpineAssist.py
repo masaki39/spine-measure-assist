@@ -23,10 +23,10 @@ for _p in [os.path.join(_MODULE_DIR, "lib"), _PROJECT_ROOT]:
         sys.path.insert(0, _p)
 
 
-class WholeSpineAnnotation(ScriptedLoadableModule):
+class WholeSpineAssist(ScriptedLoadableModule):
     def __init__(self, parent=None):
         ScriptedLoadableModule.__init__(self, parent)
-        self.parent.title = "Whole Spine Annotation"
+        self.parent.title = "Whole Spine Assist"
         self.parent.categories = ["Spine"]
         self.parent.dependencies = []
         self.parent.contributors = ["masaki39"]
@@ -42,7 +42,7 @@ class WholeSpineAnnotation(ScriptedLoadableModule):
         self.parent.acknowledgementText = ""
 
 
-class WholeSpineAnnotationWidget(ScriptedLoadableModuleWidget):
+class WholeSpineAssistWidget(ScriptedLoadableModuleWidget):
     def setup(self):
         ScriptedLoadableModuleWidget.setup(self)
 
@@ -68,11 +68,11 @@ class WholeSpineAnnotationWidget(ScriptedLoadableModuleWidget):
             self.controller.cleanup()
 
 
-class WholeSpineAnnotationLogic(ScriptedLoadableModuleLogic):
+class WholeSpineAssistLogic(ScriptedLoadableModuleLogic):
     pass
 
 
-class WholeSpineAnnotationTest(ScriptedLoadableModuleTest):
+class WholeSpineAssistTest(ScriptedLoadableModuleTest):
     def setUp(self):
         slicer.mrmlScene.Clear()
 

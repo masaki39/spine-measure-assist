@@ -1,5 +1,5 @@
 #-----------------------------------------------------------------------------
-set(MODULE_NAME WholeSpineAnnotation)
+set(MODULE_NAME LumbarMeasureAssist)
 
 #-----------------------------------------------------------------------------
 set(MODULE_PYTHON_SCRIPTS
@@ -7,12 +7,14 @@ set(MODULE_PYTHON_SCRIPTS
   )
 
 set(MODULE_PYTHON_RESOURCES
+  lib/assist_controller.py
+  lib/logic_angles.py
+  lib/logic_export.py
+  lib/logic_inference.py
+  lib/ui_measure.py
+  lib/ui_export.py
+  lib/ui_auto.py
   lib/__init__.py
-  lib/annotation_controller.py
-  lib/dataset_io.py
-  lib/ui_dataset.py
-  lib/ui_annotate.py
-  lib/ui_save.py
   )
 
 #-----------------------------------------------------------------------------
@@ -25,5 +27,8 @@ slicerMacroBuildScriptedModule(
 
 #-----------------------------------------------------------------------------
 if(BUILD_TESTING)
+
+  # Register the unittest subclass in the main script as a ctest.
   slicer_add_python_unittest(SCRIPT ${MODULE_NAME}.py)
+
 endif()

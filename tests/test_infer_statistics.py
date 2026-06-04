@@ -145,7 +145,7 @@ def test_compute_angles_l1pa_absent_without_l1center():
 
 def test_compute_angles_matches_logic_angles():
     """compute_angles must produce identical results to logic_angles.compute_angles_from_points."""
-    import SagittalMeasureAssist.lib.logic_angles as ref
+    import LumbarMeasureAssist.lib.logic_angles as ref
 
     pts_dict = {
         "L1_ant": (100.0, 200.0), "L1_post": (160.0, 210.0),

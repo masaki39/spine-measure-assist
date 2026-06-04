@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Tuple
 
 from logic_angles import compute_angles_from_points
@@ -15,6 +15,7 @@ class MeasurementSetDef:
     vector_modes: Dict[str, str]
     vector_colors: Dict[str, Tuple[float, float, float]]
     midpoint_definitions: Dict[str, Tuple[str, str]]
+    value_units: Dict[str, str] = field(default_factory=dict)
 
 
 PELVIC_SET = MeasurementSetDef(

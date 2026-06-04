@@ -7,10 +7,10 @@ import qt
 import slicer
 import vtk
 
-from logic_angles import REQUIRED_KEYS
-from logic_export import ExportLogic
-from logic_inference import OnnxInferenceLogic
-from measurement_sets import PELVIC_SET, get_set, set_names
+from logic_angles_cervical import REQUIRED_KEYS
+from cervical_logic_export import ExportLogic
+from cervical_logic_inference import OnnxInferenceLogic
+from cervical_measurement_sets import CERVICAL_SET, get_set, set_names
 
 
 def _extend_to_line(p1, p2, extend=1000.0):
@@ -36,15 +36,15 @@ class AssistController:
         self.export_ui = export_ui
         self.auto_ui = auto_ui
         self.logic = logic
-        self._active_set = PELVIC_SET
+        self._active_set = CERVICAL_SET
         self.counter = 1
         self.infer = OnnxInferenceLogic()
         self._observedMarkupNode = None
         self._markupObserverTags = []
-        self._heatmap_channels = None  # (L, H, W)
+        self._heatmap_channels = None
         self._heatmap_volume_node = None
-        self._vector_line_nodes = {}  # key: "L1" / "S1" / "pelvis" / "L1_pelvis"
-        self._pending_label = None   # label being placed via individual Place button
+        self._vector_line_nodes = {}
+        self._pending_label = None
         self._shortcuts = []
         self._connect_signals()
         self._setup_shortcuts()
@@ -52,22 +52,23 @@ class AssistController:
 
     # --- Shortcuts ---
     def _setup_shortcuts(self):
+        mw = slicer.util.mainWindow()
         bindings = [
             (",", self.onVolumePrev),
             (".", self.onVolumeNext),
             ("r", self.onRunInference),
             ("e", self.onExportCsv),
-            ("Shift+Left",  lambda: self._move_selected_landmark(-1,  0)),
-            ("Shift+Right", lambda: self._move_selected_landmark( 1,  0)),
-            ("Shift+Up",    lambda: self._move_selected_landmark( 0,  1)),
-            ("Shift+Down",  lambda: self._move_selected_landmark( 0, -1)),
             ("F1", self.onShowHotkeys),
         ]
-        mw = slicer.util.mainWindow()
         for key, slot in bindings:
             sc = qt.QShortcut(qt.QKeySequence(key), mw)
             sc.connect("activated()", slot)
             self._shortcuts.append(sc)
+
+        space_sc = qt.QShortcut(qt.QKeySequence(qt.Qt.Key_Space), mw)
+        space_sc.setContext(qt.Qt.ApplicationShortcut)
+        space_sc.connect("activated()", self._on_place_next)
+        self._shortcuts.append(space_sc)
 
     # --- Signal wiring ---
     def _connect_signals(self):
@@ -96,9 +97,7 @@ class AssistController:
         self._connect_landmark_buttons()
 
     def _connect_landmark_buttons(self):
-        """Connect each per-landmark Place button to onPlaceLandmark."""
         for label, (btn, _) in self.measure_ui.landmark_rows.items():
-            # Use default-argument capture to bind current label value
             btn.connect("clicked()", lambda lbl=label: self.onPlaceLandmark(lbl))
 
     # --- Volume navigation ---
@@ -172,11 +171,11 @@ class AssistController:
         if volumeNode is None:
             return
         idx = self.export_ui.caseIdSourceCombo.currentIndex
-        if idx == 1:    # Filename (default)
+        if idx == 1:
             value = self._get_filename(volumeNode)
-        elif idx == 0:  # DICOM Patient ID
+        elif idx == 0:
             value = self._get_patient_id(volumeNode)
-        else:           # Auto-numbering (idx == 2)
+        else:
             value = None
         self.export_ui.caseIdEdit.setText(value if value else "")
 
@@ -185,14 +184,10 @@ class AssistController:
         self._fill_case_id_from_source(volumeNode)
 
     def onPlaceLandmark(self, label):
-        """Enter placement mode for a specific landmark label."""
         self._pending_label = label
         fiducialNode = self._ensureMarkupNodeExists()
         self.measure_ui.markupSelector.setCurrentNode(fiducialNode)
 
-        # Explicitly activate the fiducial node for placement.
-        # Without this, Slicer may target the most recently added markup node
-        # (e.g. a Vec_* MarkupsLineNode) instead.
         selectionNode = slicer.app.applicationLogic().GetSelectionNode()
         selectionNode.SetReferenceActivePlaceNodeClassName("vtkMRMLMarkupsFiducialNode")
         selectionNode.SetActivePlaceNodeID(fiducialNode.GetID())
@@ -202,7 +197,6 @@ class AssistController:
         self._highlight_pending_button(label)
 
     def _highlight_pending_button(self, active_label):
-        """Highlight the active Place button orange; reset others."""
         for label, (btn, _) in self.measure_ui.landmark_rows.items():
             if label == active_label:
                 btn.setText("Placing…")
@@ -212,7 +206,6 @@ class AssistController:
                 btn.setStyleSheet("")
 
     def _reset_pending_button(self):
-        """Reset all Place button labels and styles."""
         for btn, _ in self.measure_ui.landmark_rows.values():
             btn.setText("Place")
             btn.setStyleSheet("")
@@ -220,28 +213,28 @@ class AssistController:
     def onShowHotkeys(self):
         qt.QMessageBox.information(
             slicer.util.mainWindow(), "Hotkeys",
+            "Space      次の未設定ランドマークを配置\n"
             ",          Previous volume\n"
             ".          Next volume\n"
             "r          Run inference\n"
             "e          Export CSV\n"
-            "Shift+Arrow  Move active landmark 1 mm\n"
             "F1         Show this help",
         )
 
-    def _move_selected_landmark(self, dx, dy, step=1.0):
-        """Shift+Arrow: アクティブな点を step mm 移動する。RAS[0]=x軸、RAS[1]=y軸。"""
+    def _on_place_next(self):
+        """Space: 次の未設定ランドマークに配置モードを切り替える。"""
         markupNode = self.measure_ui.markupSelector.currentNode()
-        if markupNode is None:
-            return
-        idx = markupNode.GetActiveControlPoint()
-        if idx < 0:
-            return
-        pos = [0.0, 0.0, 0.0]
-        markupNode.GetNthControlPointPosition(idx, pos)
-        markupNode.SetNthControlPointPosition(idx, pos[0] + dx * step, pos[1] + dy * step, pos[2])
+        placed = set()
+        if markupNode is not None:
+            placed = {markupNode.GetNthControlPointLabel(i)
+                      for i in range(markupNode.GetNumberOfControlPoints())}
+        for label in self._active_set.point_labels:
+            if label not in placed:
+                self.onPlaceLandmark(label)
+                return
+        self.measure_ui.statusLabel.setText("全ランドマーク設定済みです")
 
     def _update_landmark_status_buttons(self, markupNode):
-        """Update ✓/○ status indicators based on which points are placed."""
         placed = set()
         if markupNode is not None:
             for i in range(markupNode.GetNumberOfControlPoints()):
@@ -298,17 +291,14 @@ class AssistController:
             label = self._pending_label
             self._pending_label = None
             self._reset_pending_button()
-            # Remove existing point with this label if any (replace workflow)
             for i in range(n - 1):
                 if markupNode.GetNthControlPointLabel(i) == label:
                     markupNode.RemoveNthControlPoint(i)
                     break
-            # Label the newly added (now last) point
             markupNode.SetNthControlPointLabel(
                 markupNode.GetNumberOfControlPoints() - 1, label
             )
         else:
-            # Sequential: assign the first unused label
             used = {markupNode.GetNthControlPointLabel(i) for i in range(n - 1)}
             for label in self._active_set.point_labels:
                 if label not in used:
@@ -324,8 +314,8 @@ class AssistController:
         if markupNode is None:
             return
 
-        label_to_pos = {}    # 2D (x, y) for angle computation, with optional x-flip
-        label_to_ras3d = {}  # 3D RAS for vector visualization
+        label_to_pos = {}
+        label_to_ras3d = {}
         coordsRAS = [0.0, 0.0, 0.0]
         active_labels = set(self._active_set.point_labels)
         for i in range(markupNode.GetNumberOfControlPoints()):
@@ -339,7 +329,6 @@ class AssistController:
         n_placed = len(label_to_pos)
         n_total = len(self._active_set.point_labels)
 
-        # Require the 5 base points before computing angles
         missing_required = [k for k in REQUIRED_KEYS if k not in label_to_pos]
         if missing_required:
             self.measure_ui.statusLabel.setText(f"Landmarks: {n_placed} / {n_total}")
@@ -391,7 +380,7 @@ class AssistController:
             self.auto_ui.statusLabel.setText(f"Error: inference failed ({exc})")
             return
 
-        self._heatmap_channels = heatmap_2d  # (L, H, W)
+        self._heatmap_channels = heatmap_2d
         self._show_heatmap_overlay(volumeNode, heatmap_2d)
         for w in [self.auto_ui.heatmapCheckBox, self.auto_ui.landmarkCombo, self.auto_ui.opacitySlider]:
             w.setEnabled(True)
@@ -513,7 +502,6 @@ class AssistController:
         visible = self.measure_ui.showVectorsCheck.isChecked()
 
         for name, (p1_key, p2_key) in self._active_set.vector_definitions.items():
-            # Skip vectors whose endpoints are not yet available
             if p1_key not in pts or p2_key not in pts:
                 if name in self._vector_line_nodes:
                     self._vector_line_nodes[name].SetDisplayVisibility(0)
@@ -570,12 +558,12 @@ class AssistController:
     def _show_heatmap_overlay(self, volumeNode, heatmap_channels):
         idx = self.auto_ui.landmarkCombo.currentIndex
         hm_2d = np.max(heatmap_channels, axis=0) if idx == 0 else heatmap_channels[idx - 1]
-        hm_volume = hm_2d[np.newaxis]  # (1, H, W)
+        hm_volume = hm_2d[np.newaxis]
 
         hm_node = slicer.mrmlScene.GetFirstNodeByName("HeatmapOverlay")
         if hm_node is None:
             hm_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "HeatmapOverlay")
-            hm_node.SetHideFromEditors(True)  # exclude from volume selectors
+            hm_node.SetHideFromEditors(True)
         self._heatmap_volume_node = hm_node
 
         slicer.util.updateVolumeFromArray(hm_node, hm_volume)
@@ -605,12 +593,6 @@ class AssistController:
 
     # --- Private helpers ---
     def _ensureVectorNodesExist(self):
-        """Pre-create all Vec_* line nodes before placement mode starts.
-
-        Lazy creation inside _updateVectorOverlays causes Slicer to switch the
-        active placement target to the newly added MarkupsLineNode mid-click,
-        resulting in stray line segments instead of fiducial points.
-        """
         for name in self._active_set.vector_definitions:
             if name in self._vector_line_nodes:
                 continue
@@ -658,7 +640,8 @@ class AssistController:
             if value is None or (isinstance(value, float) and math.isnan(value)):
                 text = "--"
             else:
-                text = f"{value:.1f}°"
+                unit = self._active_set.value_units.get(name, "°")
+                text = f"{value:.1f}{unit}"
             self.measure_ui.resultsTable.item(i, 1).setText(text)
 
     def _format_counter_preview(self):
