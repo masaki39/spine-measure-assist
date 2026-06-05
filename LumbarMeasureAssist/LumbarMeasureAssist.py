@@ -23,6 +23,10 @@ lib_path = os.path.join(os.path.dirname(__file__), "lib")
 if lib_path not in sys.path:
     sys.path.insert(0, lib_path)
 
+shared_path = os.path.join(os.path.dirname(__file__), "..", "shared")
+if shared_path not in sys.path:
+    sys.path.insert(0, shared_path)
+
 import logic_angles
 from assist_controller import AssistController
 from measurement_sets import PELVIC_SET, set_names

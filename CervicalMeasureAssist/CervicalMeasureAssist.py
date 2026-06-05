@@ -20,6 +20,10 @@ _lib_path = os.path.join(_MODULE_DIR, "lib")
 if _lib_path not in sys.path:
     sys.path.insert(0, _lib_path)
 
+_shared_path = os.path.join(_MODULE_DIR, "..", "shared")
+if _shared_path not in sys.path:
+    sys.path.insert(0, _shared_path)
+
 import logic_angles_cervical
 from cervical_assist_controller import AssistController
 from cervical_measurement_sets import CERVICAL_SET, set_names

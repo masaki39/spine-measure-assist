@@ -1,3 +1,4 @@
+import json
 import logging
 import math
 import os
@@ -46,6 +47,10 @@ class AssistController:
         self._vector_line_nodes = {}  # key: "L1" / "S1" / "pelvis" / "L1_pelvis"
         self._pending_label = None   # label being placed via individual Place button
         self._shortcuts = []
+        self._dataset_dir = None
+        self._dataset_cases = []
+        self._dataset_idx = -1
+        self._last_angles = None
         self._connect_signals()
         self._setup_shortcuts()
         self._update_counter_preview()
@@ -77,6 +82,10 @@ class AssistController:
         self.measure_ui.volumeSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onVolumeChanged)
         self.measure_ui.prevVolumeButton.connect("clicked()", self.onVolumePrev)
         self.measure_ui.nextVolumeButton.connect("clicked()", self.onVolumeNext)
+        self.measure_ui.datasetBrowseButton.connect("clicked()", self._on_dataset_browse)
+        self.measure_ui.datasetPrevButton.connect("clicked()", self._on_dataset_prev)
+        self.measure_ui.datasetNextButton.connect("clicked()", self._on_dataset_next)
+        self.measure_ui.datasetCaseCombo.connect("currentIndexChanged(int)", self._on_dataset_case_changed)
         self.measure_ui.clearMarkupButton.connect("clicked()", self.onClearMarkups)
         self.measure_ui.markupSelector.connect("currentNodeChanged(vtkMRMLNode*)", self.onMarkupNodeChanged)
         self.measure_ui.flipXAxisCheckBox.connect("toggled(bool)", lambda *_: self.onUpdateMeasurements())
@@ -108,6 +117,9 @@ class AssistController:
                 if not n.GetHideFromEditors()]
 
     def onVolumePrev(self):
+        if self.measure_ui.sourceTabWidget.currentIndex == 1:
+            self._on_dataset_prev()
+            return
         nodes = self._volume_nodes()
         if not nodes:
             return
@@ -116,6 +128,9 @@ class AssistController:
         self.measure_ui.volumeSelector.setCurrentNode(nodes[(idx - 1) % len(nodes)])
 
     def onVolumeNext(self):
+        if self.measure_ui.sourceTabWidget.currentIndex == 1:
+            self._on_dataset_next()
+            return
         nodes = self._volume_nodes()
         if not nodes:
             return
@@ -217,6 +232,157 @@ class AssistController:
         for btn, _ in self.measure_ui.landmark_rows.values():
             btn.setText("Place")
             btn.setStyleSheet("")
+
+    # --- Dataset tab ---
+    def _on_dataset_browse(self):
+        chosen = qt.QFileDialog.getExistingDirectory(
+            slicer.util.mainWindow(), "データセットディレクトリを選択",
+            self._dataset_dir or "",
+        )
+        if not chosen:
+            return
+        self._dataset_dir = chosen
+        self.measure_ui.datasetDirEdit.setText(chosen)
+        cases = sorted(
+            f.replace("_image.npy", "")
+            for f in os.listdir(chosen) if f.endswith("_image.npy")
+        )
+        self._dataset_cases = cases
+        self._dataset_idx = -1
+        self.measure_ui.datasetCaseCombo.blockSignals(True)
+        self.measure_ui.datasetCaseCombo.clear()
+        for c in cases:
+            self.measure_ui.datasetCaseCombo.addItem(c)
+        self.measure_ui.datasetCaseCombo.blockSignals(False)
+        if cases:
+            self._load_dataset_case(0)
+
+    def _on_dataset_prev(self):
+        if self._dataset_cases:
+            self._load_dataset_case((self._dataset_idx - 1) % len(self._dataset_cases))
+
+    def _on_dataset_next(self):
+        if self._dataset_cases:
+            self._load_dataset_case((self._dataset_idx + 1) % len(self._dataset_cases))
+
+    def _on_dataset_case_changed(self, index):
+        if 0 <= index < len(self._dataset_cases) and index != self._dataset_idx:
+            self._load_dataset_case(index)
+
+    def _load_dataset_case(self, idx):
+        if not self._dataset_cases or idx < 0 or idx >= len(self._dataset_cases):
+            return
+        self._last_angles = None
+        self._dataset_idx = idx
+        case_id = self._dataset_cases[idx]
+        self.measure_ui.datasetCaseCombo.blockSignals(True)
+        self.measure_ui.datasetCaseCombo.setCurrentIndex(idx)
+        self.measure_ui.datasetCaseCombo.blockSignals(False)
+
+        npy_file = os.path.join(self._dataset_dir, f"{case_id}_image.npy")
+        json_file = os.path.join(self._dataset_dir, f"{case_id}_landmarks.json")
+
+        array = np.load(npy_file).astype(np.float32)
+        if array.ndim == 2:
+            array = array[np.newaxis, :, :]
+
+        node_name = f"DS_{case_id}"
+        old = slicer.mrmlScene.GetFirstNodeByName(node_name)
+        if old:
+            slicer.mrmlScene.RemoveNode(old)
+        vol_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", node_name)
+        slicer.util.updateVolumeFromArray(vol_node, array)
+
+        meta = {}
+        if os.path.exists(json_file):
+            with open(json_file, encoding="utf-8") as f:
+                meta = json.load(f)
+            md = meta.get("metadata", {})
+            ijk_to_ras = md.get("ijk_to_ras", [[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+            origin = md.get("origin_ras", [0.0, 0.0, 0.0])
+            mat = vtk.vtkMatrix4x4()
+            mat.Identity()
+            for r in range(3):
+                for c in range(3):
+                    mat.SetElement(r, c, ijk_to_ras[r][c])
+                mat.SetElement(r, 3, origin[r])
+            vol_node.SetIJKToRASMatrix(mat)
+
+        vol_node.CreateDefaultDisplayNodes()
+        dn = vol_node.GetDisplayNode()
+        if dn:
+            flat = array.ravel()
+            lo = float(np.percentile(flat, 1))
+            hi = float(np.percentile(flat, 99))
+            dn.SetWindowLevelMinMax(lo, hi)
+
+        self.measure_ui.volumeSelector.setCurrentNode(vol_node)
+        slicer.util.setSliceViewerLayers(background=vol_node)
+        lm = slicer.app.layoutManager()
+        for name in lm.sliceViewNames():
+            lm.sliceWidget(name).sliceLogic().FitSliceToAll()
+
+        if meta:
+            self._restore_landmarks_from_json(meta, vol_node)
+        self.measure_ui.statusLabel.setText(f"Loaded: {case_id}")
+
+    def _restore_landmarks_from_json(self, meta, vol_node):
+        lm = meta.get("landmarks_ijk", {})
+        ijk_to_ras_mat = vtk.vtkMatrix4x4()
+        vol_node.GetIJKToRASMatrix(ijk_to_ras_mat)
+
+        fiducial_node = self._ensureMarkupNodeExists()
+        fiducial_node.RemoveAllControlPoints()
+
+        for key in self._active_set.point_labels:
+            entry = lm.get(key) or {}
+            i_val = entry.get("i")
+            if i_val is None:
+                continue
+            j_val = entry.get("j", 0.0)
+            k_val = entry.get("k", 0.0)
+            ras_h = ijk_to_ras_mat.MultiplyPoint([i_val, j_val, k_val, 1.0])
+            pt_idx = fiducial_node.AddControlPoint(ras_h[0], ras_h[1], ras_h[2])
+            fiducial_node.SetNthControlPointLabel(pt_idx, key)
+
+        self.measure_ui.markupSelector.setCurrentNode(fiducial_node)
+        self.onUpdateMeasurements()
+
+    def _autosave_dataset(self):
+        if self.measure_ui.sourceTabWidget.currentIndex != 1:
+            return
+        if not self._dataset_cases or self._dataset_idx < 0:
+            return
+        case_id = self._dataset_cases[self._dataset_idx]
+        json_file = os.path.join(self._dataset_dir, f"{case_id}_landmarks.json")
+        if not os.path.exists(json_file):
+            return
+        vol_node = self.measure_ui.volumeSelector.currentNode()
+        if vol_node is None:
+            return
+
+        ras_to_ijk = vtk.vtkMatrix4x4()
+        vol_node.GetRASToIJKMatrix(ras_to_ijk)
+
+        new_lm = {key: None for key in self._active_set.point_labels}
+        markupNode = self.measure_ui.markupSelector.currentNode()
+        if markupNode is not None:
+            coordsRAS = [0.0, 0.0, 0.0]
+            for i in range(markupNode.GetNumberOfControlPoints()):
+                label = markupNode.GetNthControlPointLabel(i)
+                if label in new_lm:
+                    markupNode.GetNthControlPointPosition(i, coordsRAS)
+                    ijk_h = ras_to_ijk.MultiplyPoint([coordsRAS[0], coordsRAS[1], coordsRAS[2], 1.0])
+                    new_lm[label] = {"i": ijk_h[0], "j": ijk_h[1], "k": ijk_h[2]}
+
+        with open(json_file, encoding="utf-8") as f:
+            data = json.load(f)
+        data["landmarks_ijk"] = new_lm
+        data["flip_x_axis"] = bool(self.measure_ui.flipXAxisCheckBox.isChecked())
+        if self._last_angles:
+            data["angles_deg"] = self._last_angles
+        with open(json_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
 
     def onShowHotkeys(self):
         qt.QMessageBox.information(
@@ -347,6 +513,7 @@ class AssistController:
             self.measure_ui.statusLabel.setText(f"Landmarks: {n_placed} / {n_total}")
             for vnode in self._vector_line_nodes.values():
                 vnode.SetDisplayVisibility(0)
+            self._autosave_dataset()
             return
 
         try:
@@ -355,12 +522,14 @@ class AssistController:
             self.measure_ui.statusLabel.setText(f"Error: {exc}")
             return
 
+        self._last_angles = angles
         self._updateResultsTable(angles)
         status_text = "Measurements updated."
         if n_placed < n_total:
             status_text += f"  ({n_placed} / {n_total} points placed)"
         self.measure_ui.statusLabel.setText(status_text)
         self._updateVectorOverlays(label_to_ras3d)
+        self._autosave_dataset()
 
     def onBrowseModel(self):
         file_path = qt.QFileDialog.getOpenFileName(

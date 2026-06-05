@@ -1,6 +1,7 @@
 import ctk
 import qt
 import slicer
+from ui_source_tab import SourceTabWidget
 
 
 class MeasureUI:
@@ -25,30 +26,17 @@ class MeasureUI:
         else:
             self.setCombo = None
 
-        self.volumeSelector = slicer.qMRMLNodeComboBox()
-        self.volumeSelector.nodeTypes = ["vtkMRMLScalarVolumeNode"]
-        self.volumeSelector.selectNodeUponCreation = True
-        self.volumeSelector.addEnabled = False
-        self.volumeSelector.removeEnabled = False
-        self.volumeSelector.noneEnabled = True
-        self.volumeSelector.showHidden = False
-        self.volumeSelector.showChildNodeTypes = False
-        self.volumeSelector.setMRMLScene(slicer.mrmlScene)
-        self.volumeSelector.setToolTip(
-            "Select the target lateral spine X-ray volume (optional for measurement only)."
-        )
-
-        self.prevVolumeButton = qt.QPushButton("◀")
-        self.prevVolumeButton.setFixedWidth(30)
-        self.prevVolumeButton.toolTip = "Switch to previous volume"
-        self.nextVolumeButton = qt.QPushButton("▶")
-        self.nextVolumeButton.setFixedWidth(30)
-        self.nextVolumeButton.toolTip = "Switch to next volume"
-        volLayout = qt.QHBoxLayout()
-        volLayout.addWidget(self.volumeSelector, 1)
-        volLayout.addWidget(self.prevVolumeButton)
-        volLayout.addWidget(self.nextVolumeButton)
-        form.addRow("Volume:", volLayout)
+        _src = SourceTabWidget()
+        self.sourceTabWidget = _src.sourceTabWidget
+        self.volumeSelector = _src.volumeSelector
+        self.prevVolumeButton = _src.prevVolumeButton
+        self.nextVolumeButton = _src.nextVolumeButton
+        self.datasetDirEdit = _src.datasetDirEdit
+        self.datasetBrowseButton = _src.datasetBrowseButton
+        self.datasetPrevButton = _src.datasetPrevButton
+        self.datasetCaseCombo = _src.datasetCaseCombo
+        self.datasetNextButton = _src.datasetNextButton
+        form.addRow(self.sourceTabWidget)
 
         self.markupSelector = slicer.qMRMLNodeComboBox()
         self.markupSelector.nodeTypes = ["vtkMRMLMarkupsFiducialNode"]
