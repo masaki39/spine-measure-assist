@@ -75,13 +75,13 @@ class MeasureUI:
         if initial_set:
             self._rebuild_landmark_grid(initial_set)
 
-        self.showVectorsCheck = qt.QCheckBox("Show vectors (L1, S1, pelvis, L1_pelvis)")
+        self.showVectorsCheck = qt.QCheckBox("Show vectors (C2, C7inf, T1, SVA)")
         self.showVectorsCheck.toolTip = (
             "Overlay auxiliary lines for each measurement vector:\n"
-            "  L1:       L1_ant → L1_post  (full line)\n"
-            "  S1:       S1_ant → S1_post  (full line)\n"
-            "  pelvis:   FH → midpoint of S1  (segment)\n"
-            "  L1_pelvis: FH → L1_center  (segment)"
+            "  C2:    C2_ant → C2_post      (full line)\n"
+            "  C7inf: C7_inf_ant → C7_inf_post (full line)\n"
+            "  T1:    T1_ant → T1_post      (full line)\n"
+            "  SVA:   C7_sup_post → C2_center (segment)"
         )
         form.addRow(self.showVectorsCheck)
 
