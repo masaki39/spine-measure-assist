@@ -8,7 +8,7 @@ import qt
 import slicer
 import vtk
 
-from logic_angles_cervical import REQUIRED_KEYS
+from logic_angles_cervical import c2c7_angle_deg, t1_slope_deg, c2c7_sva_mm
 from cervical_logic_export import ExportLogic
 from cervical_logic_inference import OnnxInferenceLogic
 from cervical_measurement_sets import CERVICAL_SET, get_set, set_names
@@ -495,25 +495,21 @@ class AssistController:
         n_placed = len(label_to_pos)
         n_total = len(self._active_set.point_labels)
 
-        missing_required = [k for k in REQUIRED_KEYS if k not in label_to_pos]
-        if missing_required:
-            self.measure_ui.statusLabel.setText(f"Landmarks: {n_placed} / {n_total}")
-            for vnode in self._vector_line_nodes.values():
-                vnode.SetDisplayVisibility(0)
-            self._autosave_dataset()
-            return
+        pos = label_to_pos
+        angles = {
+            "C2C7_angle": c2c7_angle_deg(pos["C2_ant"], pos["C2_post"], pos["C7_inf_ant"], pos["C7_inf_post"])
+                if all(k in pos for k in ("C2_ant", "C2_post", "C7_inf_ant", "C7_inf_post")) else None,
+            "T1S": t1_slope_deg(pos["T1_ant"], pos["T1_post"])
+                if all(k in pos for k in ("T1_ant", "T1_post")) else None,
+            "C2C7_SVA": c2c7_sva_mm(pos["C2_center"], pos["C7_sup_post"])
+                if all(k in pos for k in ("C2_center", "C7_sup_post")) else None,
+        }
 
-        try:
-            angles = self.logic.compute_angles_from_points(label_to_pos)
-        except ValueError as exc:
-            self.measure_ui.statusLabel.setText(f"Error: {exc}")
-            return
-
-        self._last_angles = angles
+        self._last_angles = {k: v for k, v in angles.items() if v is not None}
         self._updateResultsTable(angles)
-        status_text = "Measurements updated."
-        if n_placed < n_total:
-            status_text += f"  ({n_placed} / {n_total} points placed)"
+        status_text = f"Landmarks: {n_placed} / {n_total}"
+        if n_placed == n_total:
+            status_text = "Measurements updated."
         self.measure_ui.statusLabel.setText(status_text)
         self._updateVectorOverlays(label_to_ras3d)
         self._autosave_dataset()
@@ -667,6 +663,11 @@ class AssistController:
             if a in label_to_ras3d and b in label_to_ras3d:
                 pa, pb = label_to_ras3d[a], label_to_ras3d[b]
                 pts[key] = ((pa[0]+pb[0])/2, (pa[1]+pb[1])/2, (pa[2]+pb[2])/2)
+        for key, (x_src, y_src) in self._active_set.plumb_definitions.items():
+            if x_src in pts and y_src in pts:
+                pa, pb = pts[x_src], pts[y_src]
+                # horizontal (R, index 0) from x_src; vertical (A, index 1) from y_src
+                pts[key] = (pa[0], pb[1], pa[2])
 
         visible = self.measure_ui.showVectorsCheck.isChecked()
 
@@ -695,6 +696,8 @@ class AssistController:
                 node.SetNthControlPointPosition(0, ep1[0], ep1[1], ep1[2])
                 node.SetNthControlPointPosition(1, ep2[0], ep2[1], ep2[2])
 
+            node.SetNthControlPointVisibility(0, False)
+            node.SetNthControlPointVisibility(1, False)
             node.SetDisplayVisibility(int(visible))
 
     def _onShowVectorsToggled(self, checked):

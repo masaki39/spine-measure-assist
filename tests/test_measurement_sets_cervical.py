@@ -44,7 +44,11 @@ def test_cervical_set_angle_units_default_to_degree():
 
 
 def test_cervical_set_vector_endpoints_valid():
-    all_labels = set(CERVICAL_SET.point_labels) | set(CERVICAL_SET.midpoint_definitions.keys())
+    all_labels = (
+        set(CERVICAL_SET.point_labels)
+        | set(CERVICAL_SET.midpoint_definitions.keys())
+        | set(CERVICAL_SET.plumb_definitions.keys())
+    )
     for name, (p1, p2) in CERVICAL_SET.vector_definitions.items():
         assert p1 in all_labels, f"Vector {name}: endpoint '{p1}' not in labels"
         assert p2 in all_labels, f"Vector {name}: endpoint '{p2}' not in labels"

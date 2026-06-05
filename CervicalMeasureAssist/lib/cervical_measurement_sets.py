@@ -16,6 +16,9 @@ class MeasurementSetDef:
     vector_colors: Dict[str, Tuple[float, float, float]]
     midpoint_definitions: Dict[str, Tuple[str, str]]
     value_units: Dict[str, str] = field(default_factory=dict)
+    # Derived plumb points: key -> (x_source, y_source)
+    # Result: (x_source.R, y_source.A, x_source.S) — same horizontal as x_source, same vertical as y_source
+    plumb_definitions: Dict[str, Tuple[str, str]] = field(default_factory=dict)
 
 
 CERVICAL_SET = MeasurementSetDef(
@@ -38,24 +41,28 @@ CERVICAL_SET = MeasurementSetDef(
     angle_names=["C2C7_angle", "T1S", "C2C7_SVA"],
     compute_fn=compute_cervical_measurements,
     vector_definitions={
-        "C2":    ("C2_ant",      "C2_post"),
-        "C7inf": ("C7_inf_ant",  "C7_inf_post"),
-        "T1":    ("T1_ant",      "T1_post"),
-        "SVA":   ("C7_sup_post", "C2_center"),
+        "C2":       ("C2_ant",      "C2_post"),
+        "C7inf":    ("C7_inf_ant",  "C7_inf_post"),
+        "T1":       ("T1_ant",      "T1_post"),
+        "SVA":      ("C2_center",   "SVA_foot"),
+        "SVA_horiz":("C7_sup_post", "SVA_foot"),
     },
     vector_modes={
-        "C2":    "Line",
-        "C7inf": "Line",
-        "T1":    "Line",
-        "SVA":   "Segment",
+        "C2":       "Line",
+        "C7inf":    "Line",
+        "T1":       "Line",
+        "SVA":      "Segment",
+        "SVA_horiz":"Segment",
     },
     vector_colors={
-        "C2":    (0.2, 0.8, 1.0),
-        "C7inf": (1.0, 0.6, 0.1),
-        "T1":    (0.4, 1.0, 0.4),
-        "SVA":   (1.0, 0.4, 0.8),
+        "C2":       (0.2, 0.8, 1.0),
+        "C7inf":    (1.0, 0.6, 0.1),
+        "T1":       (0.4, 1.0, 0.4),
+        "SVA":      (1.0, 0.4, 0.8),
+        "SVA_horiz":(1.0, 0.7, 0.9),
     },
     midpoint_definitions={},
+    plumb_definitions={"SVA_foot": ("C2_center", "C7_sup_post")},
     value_units={"C2C7_SVA": "mm"},
 )
 
