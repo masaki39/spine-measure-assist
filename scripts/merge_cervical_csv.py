@@ -1,15 +1,16 @@
-"""Merge cervical angle CSVs (lateral / flexion / extension) into one summary CSV."""
+"""
+Merge cervical angle CSVs (lateral / flexion / extension) into one summary CSV.
+
+Usage:
+  uv run python scripts/merge_cervical_csv.py
+  uv run python scripts/merge_cervical_csv.py --omuro /path/to/omuro --output summary.csv
+"""
+import argparse
 import csv
 import sys
 from pathlib import Path
 
 import pydicom
-
-OMURO = Path("/Volumes/T7 Shield/dicom/omuro")
-LATERAL_DIR = OMURO / "頸椎XP（側面)"
-FLEXION_DIR = OMURO / "頸椎XP（前屈）"
-EXTENSION_DIR = OMURO / "頸椎XP（後屈）"
-OUTPUT = Path("/Users/masaki/Downloads/cervical_summary.csv")
 
 
 def build_study_map(dicom_dir: Path) -> dict[str, str]:
@@ -41,15 +42,28 @@ def safe_float(val: str) -> str:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Merge cervical angle CSVs into a summary CSV")
+    parser.add_argument("--omuro", default="/Volumes/T7 Shield/dicom/omuro",
+                        help="Root directory containing lateral/flexion/extension subdirectories")
+    parser.add_argument("--output", default="/Users/masaki/Downloads/cervical_summary.csv",
+                        help="Output CSV path")
+    args = parser.parse_args()
+
+    omuro = Path(args.omuro)
+    lateral_dir = omuro / "頸椎XP（側面)"
+    flexion_dir = omuro / "頸椎XP（前屈）"
+    extension_dir = omuro / "頸椎XP（後屈）"
+    output = Path(args.output)
+
     print("Building study maps...")
-    lat_study = build_study_map(LATERAL_DIR)
-    flex_study = build_study_map(FLEXION_DIR)
-    ext_study = build_study_map(EXTENSION_DIR)
+    lat_study = build_study_map(lateral_dir)
+    flex_study = build_study_map(flexion_dir)
+    ext_study = build_study_map(extension_dir)
 
     print("Reading CSVs...")
-    lat_data = read_csv(LATERAL_DIR)
-    flex_data = read_csv(FLEXION_DIR)
-    ext_data = read_csv(EXTENSION_DIR)
+    lat_data = read_csv(lateral_dir)
+    flex_data = read_csv(flexion_dir)
+    ext_data = read_csv(extension_dir)
 
     # studies present in all three views
     all_uids = sorted(set(lat_study) & set(flex_study) & set(ext_study))
@@ -86,13 +100,13 @@ def main() -> None:
             "c2_7sva": sva,
         })
 
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUTPUT, "w", newline="", encoding="utf-8") as f:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with open(output, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
-    print(f"Wrote {len(rows)} rows → {OUTPUT}")
+    print(f"Wrote {len(rows)} rows → {output}")
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ import pytest
 def _load_cervical_measurement_sets():
     """Load measurement_sets.py from CervicalMeasureAssist/lib explicitly."""
     path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "CervicalMeasureAssist", "lib", "cervical_measurement_sets.py")
+        os.path.join(os.path.dirname(__file__), "..", "slicer", "CervicalMeasureAssist", "lib", "cervical_measurement_sets.py")
     )
     spec = importlib.util.spec_from_file_location("measurement_sets_cervical", path)
     m = importlib.util.module_from_spec(spec)

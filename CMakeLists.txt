@@ -18,9 +18,9 @@ include(${Slicer_USE_FILE})
 
 #-----------------------------------------------------------------------------
 # Extension modules
-add_subdirectory(LumbarMeasureAssist)
-add_subdirectory(WholeSpineAssist)
-add_subdirectory(CervicalMeasureAssist)
+add_subdirectory(slicer/LumbarMeasureAssist)
+add_subdirectory(slicer/WholeSpineAssist)
+add_subdirectory(slicer/CervicalMeasureAssist)
 ## NEXT_MODULE
 
 #-----------------------------------------------------------------------------

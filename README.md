@@ -1,128 +1,167 @@
-# Sagittal Measure Assist
+# spine-measure-assist
 
-脊椎側面X線（DICOM）から椎体ランドマークを検出し、矢状面アライメント角度（PI/PT/SS/LL/L1PA）を計測する 3D Slicer 拡張 + AIモデル訓練パイプライン。
+3D Slicer toolkit for spine sagittal alignment measurement and AI model training on lateral spine X-rays (DICOM).
 
 ---
 
-## セットアップ
+## Overview
 
-### 3D Slicer 拡張
+This repository contains three components:
 
-1. Slicer → `Edit > Application Settings > Modules > Additional module paths` に `SagittalMeasureAssist/` を追加
-2. Slicer 再起動
+1. **Slicer Modules** (`slicer/`) — Interactive measurement tools as 3D Slicer scripted modules
+2. **Training Pipeline** (`train/`) — Scripts for training and evaluating landmark detection models
+3. **Utility Scripts** (`scripts/`) — Data extraction, evaluation, and analysis scripts
 
-### ローカル開発環境（ML 依存あり）
+> Note: This project is under active development. APIs and file formats may change.
 
-```bash
-uv sync --extra ml
-uv run -m pytest        # テスト実行
+---
+
+## Slicer Modules
+
+Each module is a [3D Slicer](https://www.slicer.org/) scripted module that loads a lateral spine X-ray and assists with manual landmark placement and angle computation.
+
+### LumbarMeasureAssist
+
+Measures pelvic and lumbosacral parameters from 5 landmarks on lateral spine X-rays.
+
+- **Landmarks (5):** L1_ant, L1_post, S1_ant, S1_post, FH
+- **Outputs:** PI, PT, SS, LL (Lumbosacral Lordosis), L1PA
+
+### CervicalMeasureAssist
+
+Measures cervical alignment parameters from 8 landmarks on lateral cervical X-rays.
+
+- **Landmarks (8):** C2_ant, C2_post, C2_center, C7_inf_ant, C7_inf_post, C7_sup_post, T1_ant, T1_post
+- **Outputs:** C2C7 angle (°), T1 slope (°), C2C7 SVA (mm)
+
+### WholeSpineAssist
+
+Annotation tool for placing 96-point landmarks across the full spine (C2 to femur) for Phase 2 dataset construction.
+
+- **Landmarks (~96):** All vertebral corners from C3–L5 plus C2, S1, skull, femur
+- **Workflow:** Dataset-driven; keyboard-accelerated sequential landmark placement
+
+### Setup (Slicer)
+
+In 3D Slicer: `Edit > Application Settings > Modules > Additional module paths`
+
+Add each module directory:
+```
+slicer/LumbarMeasureAssist
+slicer/CervicalMeasureAssist
+slicer/WholeSpineAssist
 ```
 
 ---
 
-## 主なコマンド
+## Training Pipeline
+
+Training and evaluation scripts for landmark detection models. Uses a SmallUNet (Phase 1) and HRNet (Phase 2) architecture with heatmap regression.
+
+### Workflow
+
+```
+train/train.py          Train SmallUNet (Phase 1)
+train/export_lumbar.py  Export to ONNX
+train/eval_lumbar.py    Evaluate: MRE, angle MAE, Bland-Altman, ICC
+
+train/eval_cervical.py  Evaluate cervical model
+train/eval_phase2.py    Evaluate two-stage Phase 2 model
+```
+
+### Commands
 
 ```bash
-# 訓練（ローカル CPU）
+# Install ML dependencies
+uv sync --extra ml
+
+# Train (Phase 1 lumbar)
 uv run python train/train.py \
-  --data-dir train/dataset/l1pa \
+  --data-dir /path/to/dataset/l1pa \
   --backbone smallunet --sigma 5 --augment --loss awl \
   --split-seed 42 --epochs 50
 
-# ONNX 変換
-uv run python train/export_onnx.py \
+# Export to ONNX
+uv run python train/export_lumbar.py \
   --checkpoint train/runs/best.pt --output train/runs/best.onnx
 
-# 定量評価（ランドマーク MRE + 角度 MAE + Bland-Altman）
-uv run python train/infer_onnx.py \
-  --model train/runs/best.onnx --dir train/dataset/l1pa
+# Evaluate
+uv run python train/eval_lumbar.py \
+  --model train/runs/best.onnx --dir /path/to/dataset/l1pa
 
-# テストセット限定評価（再現可能）
-uv run python train/infer_onnx.py \
-  --model train/runs/best.onnx --dir train/dataset/l1pa \
+# Evaluate on test set only
+uv run python train/eval_lumbar.py \
+  --model train/runs/best.onnx --dir /path/to/dataset/l1pa \
   --splits train/runs/splits.json --subset test
-
-# Human baseline（アノテーション間誤差）
-uv run python scripts/inter_annotator_error.py
 ```
+
+GPU training notebooks are in `train/colab/` (Google Colab).
 
 ---
 
-## ディレクトリ構成
+## Utility Scripts
 
 ```
-SagittalMeasureAssist/        3D Slicer 拡張本体
-  SagittalMeasureAssist.py    エントリーポイント
-  lib/
-    logic_angles.py           角度計算（PI/PT/SS/LL/L1PA）
-    logic_inference.py        ONNX 推論・信頼度スコア・解剖チェック
-    logic_export.py           学習データエクスポート
-    assist_controller.py      UI ↔ ロジック橋渡し
-    ui_*.py                   各パネルの UI
-
-train/                        訓練・評価スクリプト（Slicer 外部）
-  train.py                    訓練メイン（train/val/test 3 分割、固定 seed）
-  model.py                    SmallUNet アーキテクチャ
-  dataset.py                  HeatmapDataset（拡張あり）
-  export_onnx.py              PyTorch → ONNX 変換
-  infer_onnx.py               推論・MRE/角度 MAE/Bland-Altman/ICC 評価
-  colab/
-    train.ipynb               本番訓練（Google Colab GPU 用）
-    finetune.ipynb            継続学習（Google Colab GPU 用）
-  learning_curve/             学習曲線実験（探索的、Colab GPU 用）
-    00_prepare_folds.ipynb    folds.json 生成（1 回のみ）
-    resnet34/01_train.ipynb   ResNet-34 系バリアント
-    smallunet/01_train.ipynb  SmallUNet 系バリアント
-    02_plot_curve.ipynb       学習曲線プロット
-    README.md
-
 scripts/
-  inspect_dicom.py            DICOM メタデータ調査
-  inter_annotator_error.py    アノテーション間誤差計算（human baseline）
+  extract_dataset.py          Extract WHOLE_SPINE LAT images from DB → Phase 2 dataset
+  extract_cervical_dataset.py Extract cervical images from DB → cervical dataset
+  inter_annotator_error.py    Compute MRE/MAE between two annotators (human baseline)
+  merge_cervical_csv.py       Merge lateral/flexion/extension cervical CSVs into summary
+  inspect_dicom.py            Inspect DICOM metadata
+  export_angles_csv.py        Export computed angles to CSV
+  extract_dicom_dir.py        Extract DICOMs from a directory
+```
 
-tests/                        テストスイート（193 テスト）
+All path arguments accept `--help` for options. Hardcoded defaults point to the original data SSD.
 
-train/data/                   DICOM ファイル（gitignore、~2.4 GB）
-train/dataset/                エクスポート済み npy/json（gitignore、~5.7 GB）
-train/runs/                   訓練済みチェックポイント・ONNX・splits.json
+```bash
+uv run python scripts/extract_dataset.py --help
+uv run python scripts/inter_annotator_error.py --root /path/to/dataset
 ```
 
 ---
 
-## 計測パラメータ
+## Development Setup
 
-### ランドマーク命名規則（Phase 2 設計）
+```bash
+# Install dev dependencies
+uv sync
 
+# Install with ML dependencies (PyTorch, ONNX, etc.)
+uv sync --extra ml
+
+# Run tests (279 tests, no GPU required)
+uv run -m pytest
 ```
-{椎体}_{終板}_{前後}  例: L3_sup_ant, T4_inf_post
-```
-
-C2–S1 全椎体 × 4 点（上下終板 × 前後縁）+ FH_L / FH_R = **98 点**
-
-> **Phase 1（現行）** は 6 点のみ: `L1_ant`, `L1_post`, `S1_ant`, `S1_post`, `FH`, `L1_center`
-> 詳細は `RESEARCH.md` の Phase 設計を参照。
-
-### Phase 1 計測角度（5 角度）
-
-| 名前 | 定義 |
-|---|---|
-| PI | Pelvic Incidence |
-| PT | Pelvic Tilt |
-| SS | Sacral Slope |
-| LL | Lumbosacral Lordosis（L1–S1 Cobb 角） |
-| L1PA | FH→S1_mid と FH→L1_center の符号付き角度 |
-
-### Phase 2 追加予定角度
-
-TK（胸椎後弯）、CL（頸椎前弯）、T1S、SVA、TPA、PI-LL、各分節 Cobb 角
 
 ---
 
-## Colab を使った GPU 訓練
+## Project Structure
 
-1. `train/colab/train.ipynb` を Google Colab（T4 GPU）で開く
-2. Google Drive の任意フォルダに `*_image.npy` / `*_landmarks.json` をアップロード
-3. `DRIVE_DATA_DIR` を設定して全セル実行
-4. 出力 ONNX をダウンロードして `train/runs/` に配置
+```
+slicer/
+  LumbarMeasureAssist/        Slicer module: lumbar/pelvic measurement
+  CervicalMeasureAssist/      Slicer module: cervical measurement
+  WholeSpineAssist/           Slicer module: full-spine annotation (Phase 2)
+  shared/                     Shared UI components
 
-学習曲線実験（5-fold CV）は `train/learning_curve/` の手順を参照。
+train/
+  train.py                    Training entry point (Phase 1)
+  model.py                    SmallUNet architecture
+  dataset.py                  HeatmapDataset (Phase 1)
+  dataset_cervical.py         HeatmapDataset, cervical variant
+  dataset_phase2.py           Dataset for Phase 2 (96-point)
+  model_hrnet.py              HRNet-W32 + heatmap head (Phase 2)
+  landmark_scheme.py          96-point landmark definition (single source of truth)
+  eval_lumbar.py              Evaluate lumbar ONNX model
+  eval_cervical.py            Evaluate cervical ONNX model
+  eval_phase2.py              Evaluate two-stage Phase 2 model
+  export_lumbar.py            Export lumbar model to ONNX
+  export_phase2.py            Export Phase 2 model to ONNX
+  colab/                      GPU training notebooks (Google Colab)
+  runs/                       Model checkpoints and splits.json (gitignored)
+
+scripts/                      Data preparation and analysis scripts
+
+tests/                        Test suite (279 tests)
+```

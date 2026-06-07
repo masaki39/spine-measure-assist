@@ -1,7 +1,7 @@
 import math
 import pytest
 
-import LumbarMeasureAssist.lib.logic_angles as angles
+import logic_angles as angles
 
 
 def test_vector_from_points():

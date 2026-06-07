@@ -1,5 +1,5 @@
 """
-Guards that compute_cervical_angles() in infer_onnx_cervical.py is identical
+Guards that compute_cervical_angles() in eval_cervical.py is identical
 to compute_cervical_measurements() in logic_angles_cervical.py.
 """
 
@@ -9,7 +9,7 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from train.infer_onnx_cervical import compute_cervical_angles
+from train.eval_cervical import compute_cervical_angles
 import logic_angles_cervical as ref_module
 
 KEYS = [

@@ -1,5 +1,5 @@
 """
-Tests for statistical functions and angle computation in train/infer_onnx.py.
+Tests for statistical functions and angle computation in train/eval_lumbar.py.
 These guard the clinical evaluation pipeline against unintended regressions.
 """
 import math
@@ -8,7 +8,7 @@ import os
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from train.infer_onnx import (
+from train.eval_lumbar import (
     bland_altman_stats,
     compute_angles,
     icc_3_1,
@@ -145,7 +145,7 @@ def test_compute_angles_l1pa_absent_without_l1center():
 
 def test_compute_angles_matches_logic_angles():
     """compute_angles must produce identical results to logic_angles.compute_angles_from_points."""
-    import LumbarMeasureAssist.lib.logic_angles as ref
+    import logic_angles as ref
 
     pts_dict = {
         "L1_ant": (100.0, 200.0), "L1_post": (160.0, 210.0),

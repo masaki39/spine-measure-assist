@@ -3,14 +3,15 @@ Inter-annotator error between dataset/original/ (5 points) and dataset/l1pa/ (6 
 Metrics:
   - MRE (Mean Radial Error) in mm per landmark and overall
   - MAE (Mean Absolute Error) in degrees per angle
+
+Usage:
+  uv run python scripts/inter_annotator_error.py
+  uv run python scripts/inter_annotator_error.py --root /path/to/dataset
 """
+import argparse
 import json
 import math
 from pathlib import Path
-
-ROOT = Path("/Volumes/T7 Shield/dicom/kch-organized/dataset")
-ORIG = ROOT / "original"
-L1PA = ROOT / "l1pa"
 
 COMMON_LANDMARKS = ["L1_ant", "L1_post", "S1_ant", "S1_post", "FH"]
 COMMON_ANGLES = ["PI", "PT", "SS", "LL"]
@@ -31,8 +32,17 @@ def radial_error_mm(a: dict, b: dict, spacing: list) -> float:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Compute inter-annotator error between original and l1pa datasets")
+    parser.add_argument("--root", default="/Volumes/T7 Shield/dicom/kch-organized/dataset",
+                        help="Dataset root containing original/ and l1pa/ subdirectories")
+    args = parser.parse_args()
+
+    root = Path(args.root)
+    orig = root / "original"
+    l1pa = root / "l1pa"
+
     cases = sorted(
-        [f.stem.replace("_landmarks", "") for f in ORIG.glob("*_landmarks.json")],
+        [f.stem.replace("_landmarks", "") for f in orig.glob("*_landmarks.json")],
         key=lambda x: int(x[1:]),
     )
 
@@ -41,12 +51,12 @@ def main():
 
     missing = 0
     for cid in cases:
-        p2 = L1PA / f"{cid}_landmarks.json"
+        p2 = l1pa / f"{cid}_landmarks.json"
         if not p2.exists():
             missing += 1
             continue
 
-        d1 = load_json(ORIG / f"{cid}_landmarks.json")
+        d1 = load_json(orig / f"{cid}_landmarks.json")
         d2 = load_json(p2)
 
         spacing = d1["metadata"]["spacing"]

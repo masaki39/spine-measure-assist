@@ -1,7 +1,7 @@
 [project]
-name = "anglist"
+name = "spine-measure-assist"
 version = "0.1.0"
-description = "Add your description here"
+description = "3D Slicer toolkit for spine sagittal alignment measurement and AI model training"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []

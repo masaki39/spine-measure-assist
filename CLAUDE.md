@@ -3,9 +3,9 @@
 ## プロジェクト概要
 
 脊椎側面X線（DICOM）から椎体ランドマークを検出し、脊椎アライメント角度を計測する支援ツール。
-- `LumbarMeasureAssist/` — 腰椎・骨盤パラメータ計測（3D Slicer拡張）
-- `WholeSpineAssist/` — 全脊椎 96点アノテーション（3D Slicer拡張）
-- `CervicalMeasureAssist/` — 頚椎パラメータ計測（3D Slicer拡張）
+- `slicer/LumbarMeasureAssist/` — 腰椎・骨盤パラメータ計測（3D Slicer拡張）
+- `slicer/WholeSpineAssist/` — 全脊椎 96点アノテーション（3D Slicer拡張）
+- `slicer/CervicalMeasureAssist/` — 頚椎パラメータ計測（3D Slicer拡張）
 - `train/` — ランドマーク検出モデルの訓練・ONNX出力
 
 ---
@@ -19,16 +19,16 @@ train/
   model.py            SmallUNet
   dataset.py          HeatmapDataset（6点）
   dataset_cervical.py HeatmapDataset 8チャネル（頚椎）
-  export_onnx.py      PyTorch → ONNX
-  infer_onnx.py       推論・評価（MRE/角度MAE/Bland-Altman/ICC）
-  infer_onnx_cervical.py  頚椎推論・評価（SVAはmm単位）
+  export_lumbar.py    PyTorch → ONNX（腰椎）
+  eval_lumbar.py      推論・評価（MRE/角度MAE/Bland-Altman/ICC）
+  eval_cervical.py    頚椎推論・評価（SVAはmm単位）
 
   # Phase 2（新規）
   landmark_scheme.py   96点定義・BBox導出 の唯一の源泉
   dataset_phase2.py    Phase2 Dataset（mode=full/stage1/stage2）
   model_hrnet.py       HRNet-W32 + heatmap head（Stage2）
-  export_onnx_phase2.py  Stage2 PT → ONNX
-  infer_phase2.py      2段階推論・評価
+  export_phase2.py     Stage2 PT → ONNX
+  eval_phase2.py       2段階推論・評価
 
   colab/
     train.ipynb           Phase1 訓練（GPU）
@@ -47,17 +47,17 @@ train/
   dataset/cervical/ 8点頚椎アノテーション（CervicalMeasureAssist）
   K001/... K308/    DICOMファイル
 
-LumbarMeasureAssist/lib/
+slicer/LumbarMeasureAssist/lib/
   logic_angles.py     角度計算の源泉（PI/PT/SS/LL/L1PA）
   logic_inference.py  ONNX推論・信頼度・解剖チェック
   logic_export.py     エクスポート処理
   measurement_sets.py PELVIC_SET定義
 
-CervicalMeasureAssist/lib/
-  logic_angles_cervical.py  頚椎角度計算の源泉（C2C7_angle/T1S/C2C7_SVA）
-  logic_inference.py        ONNX推論・頚椎anatomy check
-  logic_export.py           エクスポート処理
-  measurement_sets.py       CERVICAL_SET定義
+slicer/CervicalMeasureAssist/lib/
+  logic_angles_cervical.py     頚椎角度計算の源泉（C2C7_angle/T1S/C2C7_SVA）
+  cervical_logic_inference.py  ONNX推論・頚椎anatomy check
+  cervical_logic_export.py     エクスポート処理
+  cervical_measurement_sets.py CERVICAL_SET定義
 
 scripts/
   inspect_dicom.py          DICOM調査
@@ -85,15 +85,15 @@ uv run python train/train.py \
   --augment --loss awl --split-seed 42 --epochs 50
 
 # ONNX出力
-uv run python train/export_onnx.py \
+uv run python train/export_lumbar.py \
   --checkpoint train/runs/best.pt --output train/runs/best.onnx
 
 # 定量評価（全指標）
-uv run python train/infer_onnx.py \
+uv run python train/eval_lumbar.py \
   --model train/runs/best.onnx --dir "/Volumes/T7 Shield/dicom/kch-organized/dataset/l1pa"
 
 # テストセット限定評価
-uv run python train/infer_onnx.py \
+uv run python train/eval_lumbar.py \
   --model train/runs/best.onnx --dir "/Volumes/T7 Shield/dicom/kch-organized/dataset/l1pa" \
   --splits train/runs/splits.json --subset test
 
@@ -107,12 +107,12 @@ uv run python scripts/extract_dataset.py
 uv run python scripts/extract_dataset.py --limit 3  # テスト用
 
 # Phase2 ONNX変換（訓練後）
-uv run python train/export_onnx_phase2.py \
+uv run python train/export_phase2.py \
   --checkpoint train/runs/phase2_best.pt \
   --output     train/runs/phase2_best.onnx
 
 # 2段階推論評価（GT BBoxを使用）
-uv run python train/infer_phase2.py \
+uv run python train/eval_phase2.py \
   --stage1 train/runs/detector.onnx \
   --stage2 train/runs/phase2_best.onnx \
   --dir    "/Volumes/T7 Shield/dicom/kch-organized/dataset/phase2" \
@@ -126,7 +126,7 @@ uv run python scripts/extract_cervical_dataset.py
 uv run python scripts/extract_cervical_dataset.py --region CERVICAL_SPINE  # region値を調整
 
 # 頚椎推論評価
-uv run python train/infer_onnx_cervical.py \
+uv run python train/eval_cervical.py \
   --model train/runs/cervical_best.onnx \
   --dir "/Volumes/T7 Shield/dicom/kch-organized/dataset/cervical"
 ```
@@ -260,28 +260,28 @@ PI = SS + PT の恒等式が成立する（`test_compute_angles_pi_ss_pt_relatio
 
 ### 角度計算の一貫性
 
-- **腰椎**: `LumbarMeasureAssist/lib/logic_angles.py` が角度計算の唯一の源泉。
-  `infer_onnx.py` の `compute_angles()` は同一ロジックを再実装しており、`test_compute_angles_matches_logic_angles` で一致を保証している。
-- **頚椎**: `CervicalMeasureAssist/lib/logic_angles_cervical.py` が唯一の源泉。
-  `infer_onnx_cervical.py` の `compute_cervical_angles()` と一致を `test_infer_statistics_cervical.py` で保証。
+- **腰椎**: `slicer/LumbarMeasureAssist/lib/logic_angles.py` が角度計算の唯一の源泉。
+  `eval_lumbar.py` の `compute_angles()` は同一ロジックを再実装しており、`test_compute_angles_matches_logic_angles` で一致を保証している。
+- **頚椎**: `slicer/CervicalMeasureAssist/lib/logic_angles_cervical.py` が唯一の源泉。
+  `eval_cervical.py` の `compute_cervical_angles()` と一致を `test_infer_statistics_cervical.py` で保証。
   どちらかを変更したら必ず両方を同期させること。
 
 ### MeasurementSetDef の `value_units`
 
-`LumbarMeasureAssist/lib/measurement_sets.py` と `CervicalMeasureAssist/lib/measurement_sets.py` の `MeasurementSetDef` は `value_units: Dict[str, str]` フィールドを持つ（デフォルト空dict = "°"）。
+`slicer/LumbarMeasureAssist/lib/measurement_sets.py` と `slicer/CervicalMeasureAssist/lib/cervical_measurement_sets.py` の `MeasurementSetDef` は `value_units: Dict[str, str]` フィールドを持つ（デフォルト空dict = "°"）。
 SVA など mm 単位の指標は `{"C2C7_SVA": "mm"}` のように指定する。
 
 ### train/val/test 分割
 
 - `--split-seed 42` がデフォルト（再現可能性のため固定）
 - `splits.json` が訓練ごとに `runs/` 以下に保存される
-- テストセット評価は `infer_onnx.py --splits splits.json --subset test` で実行
+- テストセット評価は `eval_lumbar.py --splits splits.json --subset test` で実行
 
 ### データフォーマット
 
 **Phase 1（`dataset/l1pa/`）**: JSONキー変更時は `scripts/inter_annotator_error.py` と `train/dataset.py` を両方更新。
 
-**Phase 2（`dataset/phase2/`）**: ランドマーク定義は `train/landmark_scheme.py` のみを変更する。他のモジュール（`dataset_phase2.py`, `infer_phase2.py`）はそこからインポートしている。
+**Phase 2（`dataset/phase2/`）**: ランドマーク定義は `train/landmark_scheme.py` のみを変更する。他のモジュール（`dataset_phase2.py`, `eval_phase2.py`）はそこからインポートしている。
 
 **頚椎（`dataset/cervical/`）**: ランドマーク定義は `train/dataset_cervical.py` の `LANDMARK_ORDER` が源泉。JSONテンプレートは `scripts/extract_cervical_dataset.py` で生成。
 
