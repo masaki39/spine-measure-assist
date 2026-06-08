@@ -24,4 +24,5 @@ ml = [
     "segmentation-models-pytorch>=0.3.4",
     "timm>=1.0.0",
     "ultralytics>=8.0.0",
+    "onnxscript>=0.1.0",
 ]
