@@ -92,15 +92,25 @@ class HeatmapDataset(Dataset):
 
     def _discover_samples(self):
         out = []
+        skipped = 0
         for fname in os.listdir(self.data_dir):
             if not fname.endswith("_image.npy"):
                 continue
             base = fname.replace("_image.npy", "")
             json_path = os.path.join(self.data_dir, f"{base}_landmarks.json")
             npy_path = os.path.join(self.data_dir, fname)
-            if os.path.exists(json_path):
-                out.append((base, npy_path, json_path))
+            if not os.path.exists(json_path):
+                continue
+            with open(json_path, "r", encoding="utf-8") as fp:
+                meta = json.load(fp)
+            lm = meta.get("landmarks_ijk", {})
+            if any(lm.get(k) is None for k in self.landmark_keys):
+                skipped += 1
+                continue
+            out.append((base, npy_path, json_path))
         out.sort()
+        if skipped:
+            print(f"WARNING: {skipped} samples skipped (null landmarks)")
         if not out:
             raise RuntimeError(f"No samples found in {self.data_dir}")
         return out
