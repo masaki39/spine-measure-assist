@@ -17,7 +17,7 @@ from slicer.ScriptedLoadableModule import (
 
 # lib/ と プロジェクトルートを sys.path に追加
 _MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_ROOT = os.path.dirname(_MODULE_DIR)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(_MODULE_DIR))
 for _p in [os.path.join(_MODULE_DIR, "lib"), _PROJECT_ROOT]:
     if _p not in sys.path:
         sys.path.insert(0, _p)

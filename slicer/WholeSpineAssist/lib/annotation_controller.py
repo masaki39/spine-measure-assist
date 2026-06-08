@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 
 _DEFAULT_DATASET_DIR = os.path.normpath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                 "..", "..", "train", "dataset", "phase2")
+                 "..", "..", "..", "train", "dataset", "phase2")
 )
 
 

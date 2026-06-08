@@ -43,14 +43,9 @@ Annotation tool for placing 96-point landmarks across the full spine (C2 to femu
 
 ### Setup (Slicer)
 
-In 3D Slicer: `Edit > Application Settings > Modules > Additional module paths`
+In 3D Slicer: `Developer Tools > Extension Wizard > Select Extension`
 
-Add each module directory:
-```
-slicer/LumbarMeasureAssist
-slicer/CervicalMeasureAssist
-slicer/WholeSpineAssist
-```
+Select the `slicer/` directory of this repository. All three modules will be loaded at once.
 
 ---
 
